@@ -13,6 +13,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [esp32-c3-devkitm-1, esp32-c3-ical]
     steps:
       - uses: actions/checkout@v4
 
@@ -30,5 +33,5 @@ jobs:
       - name: Install PlatformIO
         run: pip install --upgrade platformio
 
-      - name: Build firmware
-        run: pio run -e esp32-c3-devkitm-1
+      - name: Build firmware (${{ matrix.env }})
+        run: pio run -e ${{ matrix.env }}
