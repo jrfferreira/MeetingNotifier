@@ -76,8 +76,21 @@
 </div>
 
 <div class="card">
-  <h3>My display is blank / I have an integrated ESP32-C3 + TFT board</h3>
-  <p>If you bought a small board with the display baked into the PCB (Univision / "ESP32-C3 com Display Integrado 1.44"), the GPIOs are wired differently than the standalone modules. This <strong>probe firmware</strong> cycles through candidate pin maps every ~7 seconds and labels each one on the screen. Note which combo number renders readable text, then <a href="https://github.com/jrfferreira/MeetingNotifier/issues/new">open an issue</a> with that number — we'll bake the matching pin map into a permanent build variant.</p>
+  <h3>Spotpear / Fikra "ESP32-C3 com Display Integrado 1.44" (Mercado Livre)</h3>
+  <p>For the integrated board with the 1.44" ST7735 panel baked into the PCB. Pin map and driver are taken from the seller-supplied schematic. Pick the calendar source that matches yours:</p>
+  <p>
+    <strong>JSON source</strong> (Apps Script / local helper):
+    <esp-web-install-button manifest="manifest-spotpear-144.json"></esp-web-install-button>
+  </p>
+  <p>
+    <strong>iCal source</strong> (Google Calendar secret URL):
+    <esp-web-install-button manifest="manifest-spotpear-144-ical.json"></esp-web-install-button>
+  </p>
+</div>
+
+<div class="card">
+  <h3>Some other integrated ESP32-C3 + TFT board, display is blank</h3>
+  <p>If you have a different integrated board (not Spotpear) and the standalone-module firmware shows white, this <strong>probe firmware</strong> cycles through candidate pin maps and labels each one. Run it through, note which combo number renders readable text, and <a href="https://github.com/jrfferreira/MeetingNotifier/issues/new">open an issue</a> with that number — we'll add a build variant for your board.</p>
   <esp-web-install-button manifest="manifest-probe.json"></esp-web-install-button>
 </div>
 

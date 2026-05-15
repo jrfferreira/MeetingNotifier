@@ -50,7 +50,7 @@ jobs:
         run: |
           mkdir release
           TAG="${{ steps.ver.outputs.tag }}"
-          for ENV in esp32-c3-devkitm-1 esp32-c3-ical esp32-c3-probe; do
+          for ENV in esp32-c3-devkitm-1 esp32-c3-ical esp32-c3-spotpear-144 esp32-c3-spotpear-144-ical esp32-c3-probe; do
             BUILD=".pio/build/$ENV"
             cp "$BUILD/firmware.bin"   "release/MeetingNotifier-$ENV-$TAG.bin"
             cp "$BUILD/firmware.elf"   "release/MeetingNotifier-$ENV-$TAG.elf"
@@ -92,11 +92,13 @@ jobs:
           cp -r docs/install pages/install
 
           # Per-source firmware + bootloader + partition table.
-          for SRC in json ical probe; do
+          for SRC in json ical spotpear-144 spotpear-144-ical probe; do
             case "$SRC" in
-              json)  ENV=esp32-c3-devkitm-1 ;;
-              ical)  ENV=esp32-c3-ical ;;
-              probe) ENV=esp32-c3-probe ;;
+              json)              ENV=esp32-c3-devkitm-1 ;;
+              ical)              ENV=esp32-c3-ical ;;
+              spotpear-144)      ENV=esp32-c3-spotpear-144 ;;
+              spotpear-144-ical) ENV=esp32-c3-spotpear-144-ical ;;
+              probe)             ENV=esp32-c3-probe ;;
             esac
             BUILD=".pio/build/$ENV"
             cp "$BUILD/firmware.bin"   "pages/install/firmware-$SRC.bin"
