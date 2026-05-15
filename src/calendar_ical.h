@@ -8,13 +8,10 @@
 #include <string.h>
 
 #include "ui.h"
+#include "config_store.h"
 
-// Point this at your Google Calendar "Secret address in iCal format"
-// (Settings and sharing → Integrate calendar). Override via build_flags
-// to keep the token out of git.
-#ifndef CALENDAR_URL
-#define CALENDAR_URL "https://calendar.google.com/calendar/ical/REPLACE_ME/basic.ics"
-#endif
+// CALENDAR_URL: read from NVS at fetch time (set via captive portal).
+// Compile-time `-DCALENDAR_URL='"…"'` is honoured as a fallback.
 
 #ifndef CAL_ICAL_MAX_EVENTS
 #define CAL_ICAL_MAX_EVENTS 16
@@ -130,7 +127,12 @@ inline bool calendarFetch(MeetingData& out) {
 
   HTTPClient http;
   http.setTimeout(15000);
-  if (!http.begin(client, CALENDAR_URL)) {
+  String url = cfgGetCalendarUrl();
+  if (url.length() == 0) {
+    log_w("ical: no URL configured");
+    return false;
+  }
+  if (!http.begin(client, url)) {
     log_w("ical: http.begin failed");
     return false;
   }

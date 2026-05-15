@@ -6,6 +6,8 @@ A 1.4" 240×240 TFT polls your Google Calendar once a minute and walks through f
 
 No buttons. No touch. Glance at it and know.
 
+> **First time here?** Skip this README and follow [GETTING_STARTED.md](GETTING_STARTED.md) — it walks you through buying parts, wiring, and one-click flashing in the browser. No PlatformIO, no terminal.
+
 ## States
 
 | State        | Trigger                            | Look |
@@ -39,7 +41,9 @@ Wiring (display → ESP32-C3 GPIO):
 
 SPI clock runs at 40 MHz. Pin assignments live in `src/ui.h` if you need to remap.
 
-## Setup
+## Setup (build from source)
+
+> Most users should follow the [one-click web flasher in GETTING_STARTED.md](GETTING_STARTED.md) instead. This section is for developers building from source.
 
 ### 1. Pick a calendar source
 
@@ -49,7 +53,7 @@ SPI clock runs at 40 MHz. Pin assignments live in `src/ui.h` if you need to rema
 | **iCal secret URL** | Work calendar where *Integrate calendar → Secret address* is still available | `esp32-c3-ical` | ~1 min |
 | **Local OAuth helper** | Work calendar where Apps Script *and* iCal export are disabled | `esp32-c3-devkitm-1` | ~10 min, plus a Mac / Pi that stays online |
 
-Each option ends with a URL you'll wire into the firmware as `CALENDAR_URL`. Pick one and follow the matching subsection.
+Each option ends with a URL you'll either type into the captive portal on first boot, or bake into the firmware via `-DCALENDAR_URL='"…"'`. Pick one and follow the matching subsection.
 
 #### Option A — Apps Script web app
 
@@ -100,7 +104,7 @@ git clone https://github.com/jrfferreira/MeetingNotifier
 cd MeetingNotifier
 ```
 
-Pass your `CALENDAR_URL` via `build_flags` in `platformio.ini` (keeps the URL out of git), or paste it directly into the matching header:
+By default `CALENDAR_URL` is captured at runtime via the captive portal — no build-time config needed. If you'd rather bake it into the binary (e.g. for kiosk-style deploys), pass `-DCALENDAR_URL=…` via `build_flags`:
 
 ```ini
 [env:esp32-c3-devkitm-1]      ; or [env:esp32-c3-ical] for Option B
@@ -120,7 +124,7 @@ pio device monitor                          # optional, watch the log
 
 ### 3. First boot
 
-On first power-up the device starts an open access point called **`MeetingNotifier-Setup`**. Join it from your phone, open `http://192.168.4.1`, fill in your home WiFi credentials, hit *Save and reboot*. The device stores them in NVS and never asks again.
+On first power-up the device starts an open access point called **`MeetingNotifier-Setup`**. Join it from your phone, open `http://192.168.4.1`, fill in your home WiFi credentials *and your calendar URL*, hit *Save and reboot*. The device stores both in NVS and never asks again.
 
 Once online it queries [ip-api.com](http://ip-api.com) to detect your IANA timezone and feeds it to `configTzTime`, so the clock is correct without manual TZ setup. Then it syncs NTP from `pool.ntp.org` and starts polling the calendar.
 
@@ -152,11 +156,13 @@ File map:
 | `src/ui.h`                 | Pin map, per-state palettes, `MeetingData`, time helpers, timing constants |
 | `src/display.h`            | ST7789 + GFX init, PWM backlight, per-state renderers, dirty-region updates |
 | `src/wifi_mgr.h`           | NVS-backed STA connect with SoftAP + DNS captive portal fallback; ip-api + NTP |
+| `src/config_store.h`       | NVS-backed config slots (WiFi creds, calendar URL); shared by `wifi_mgr.h` and the calendar fetchers |
 | `src/calendar.h`           | Dispatcher: includes `calendar_json.h` by default, `calendar_ical.h` with `-DUSE_ICAL_SOURCE` |
 | `src/calendar_json.h`      | HTTPS GET to a JSON endpoint (Apps Script *or* local helper) + ISO 8601 parser |
 | `src/calendar_ical.h`      | HTTPS GET to a `.ics` URL + VEVENT parser (line unfolding, `DTSTART/DTEND/SUMMARY/LOCATION`) |
 | `apps_script/Code.gs`      | Deployable Apps Script web app source (Option A) |
 | `tools/calendar_helper.py` | Local OAuth helper that mimics the Apps Script JSON contract (Option C) |
+| `docs/install/`            | ESP Web Tools install page deployed to GitHub Pages on each release |
 
 The loop runs free — no `delay()` — and is driven by `millis()` comparisons. The display refreshes every 5 s; the calendar is polled every 60 s. `renderBigNumber` and `renderBottomStrap` only repaint when their text actually changes, so a 5 s tick is cheap when nothing has moved.
 
@@ -172,18 +178,17 @@ The interesting knobs live as `#define`s in `src/ui.h`:
 | `IMMINENT_THRESHOLD_SECS` | 300     | Enter `IMMINENT` at this many seconds out |
 | `DIM_TIMEOUT_MS`          | 60 000  | Dim backlight to 20% after this much idle (ambient states only) |
 
-`CALENDAR_URL` lives in `src/calendar_json.h` / `src/calendar_ical.h`; override via `build_flags` so the URL stays out of git.
+`CALENDAR_URL` is normally set at runtime via the captive portal (NVS, namespace `wifi`, key `cal`). Compile-time `-DCALENDAR_URL='"…"'` is honoured as a fallback when the NVS slot is empty.
 
 ## Releases
 
-Every push to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which compiles both build environments and publishes a GitHub Release tagged `vYYYY.MM.DD-<run>` with both binaries attached:
+Every push to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml). It:
 
-| Asset                                                | Source |
-| ---------------------------------------------------- | ------ |
-| `MeetingNotifier-esp32-c3-devkitm-1-vYYYY.MM.DD-N.bin` | JSON (Apps Script or local helper) |
-| `MeetingNotifier-esp32-c3-ical-vYYYY.MM.DD-N.bin`     | iCal (`.ics`) |
+1. Compiles both build environments.
+2. Publishes a GitHub Release tagged `vYYYY.MM.DD-<run>` with versioned `firmware`, `bootloader`, and `partitions` binaries for each variant.
+3. Deploys the [ESP Web Tools install page](https://jrfferreira.github.io/MeetingNotifier/install/) to GitHub Pages, with stable-named binaries the page's manifest references.
 
-Both ship with the placeholder `CALENDAR_URL` baked in, so the binaries are useful only as build-validation smoke tests — you still need to rebuild locally with your own URL for a working device.
+The published binaries no longer need a hard-coded `CALENDAR_URL` — the web flasher boots the device into the captive portal, where you set both WiFi and the URL. Use the manual flash command from the release notes if you don't want to use the web tool.
 
 PRs trigger [`.github/workflows/build.yml`](.github/workflows/build.yml), which compile-checks both envs against the merge base.
 

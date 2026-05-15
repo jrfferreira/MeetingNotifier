@@ -7,14 +7,10 @@
 #include <time.h>
 
 #include "ui.h"
+#include "config_store.h"
 
-// ---------------------------------------------------------------------------
-// Configured by user — paste your Apps Script /exec URL here.
-// The script source lives in docs / repo README.
-// ---------------------------------------------------------------------------
-#ifndef CALENDAR_URL
-#define CALENDAR_URL "https://script.google.com/macros/s/REPLACE_ME/exec"
-#endif
+// CALENDAR_URL: read from NVS at fetch time (set via captive portal).
+// Compile-time `-DCALENDAR_URL='"…"'` is honoured as a fallback.
 
 // ---------------------------------------------------------------------------
 // UTC epoch from broken-down UTC components (no TZ side-effects).
@@ -81,7 +77,12 @@ inline bool calendarFetch(MeetingData& out) {
 
   HTTPClient http;
   http.setTimeout(8000);
-  if (!http.begin(client, CALENDAR_URL)) {
+  String url = cfgGetCalendarUrl();
+  if (url.length() == 0) {
+    log_w("calendar: no URL configured");
+    return false;
+  }
+  if (!http.begin(client, url)) {
     log_w("calendar: http.begin failed");
     return false;
   }

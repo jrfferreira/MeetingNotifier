@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: release
@@ -15,6 +17,9 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy-pages.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -41,17 +46,16 @@ jobs:
           TAG="v$(date -u +'%Y.%m.%d')-${{ github.run_number }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Stage artifacts
+      - name: Stage release artifacts (versioned)
         run: |
           mkdir release
           TAG="${{ steps.ver.outputs.tag }}"
           for ENV in esp32-c3-devkitm-1 esp32-c3-ical; do
             BUILD=".pio/build/$ENV"
-            cp "$BUILD/firmware.bin" "release/MeetingNotifier-$ENV-$TAG.bin"
-            cp "$BUILD/firmware.elf" "release/MeetingNotifier-$ENV-$TAG.elf"
-            if [ -f "$BUILD/firmware.factory.bin" ]; then
-              cp "$BUILD/firmware.factory.bin" "release/MeetingNotifier-$ENV-$TAG-factory.bin"
-            fi
+            cp "$BUILD/firmware.bin"   "release/MeetingNotifier-$ENV-$TAG.bin"
+            cp "$BUILD/firmware.elf"   "release/MeetingNotifier-$ENV-$TAG.elf"
+            cp "$BUILD/bootloader.bin" "release/bootloader-$ENV-$TAG.bin"
+            cp "$BUILD/partitions.bin" "release/partitions-$ENV-$TAG.bin"
           done
 
       - uses: softprops/action-gh-release@v2
@@ -65,17 +69,57 @@ jobs:
           body: |
             Built from `${{ github.sha }}`.
 
-            Two firmware variants attached, both built with the placeholder
-            `CALENDAR_URL` — rebuild locally with your own URL for a working
-            device.
+            ### Easiest install — web flasher
+            Plug in your ESP32-C3 and visit
+            **<https://jrfferreira.github.io/MeetingNotifier/install/>** in
+            Chrome / Edge / Opera. No PlatformIO needed.
 
-            | Variant | Calendar source |
-            | --- | --- |
-            | `esp32-c3-devkitm-1` | JSON endpoint (Apps Script or `tools/calendar_helper.py`) |
-            | `esp32-c3-ical`      | iCal (.ics) — Google's "Secret address in iCal format" |
+            ### Manual flash
+            ```
+            esptool.py --chip esp32c3 --port /dev/ttyACM0 write_flash \
+              0x0     bootloader-<env>-${{ steps.ver.outputs.tag }}.bin \
+              0x8000  partitions-<env>-${{ steps.ver.outputs.tag }}.bin \
+              0x10000 MeetingNotifier-<env>-${{ steps.ver.outputs.tag }}.bin
+            ```
+            where `<env>` is `esp32-c3-devkitm-1` (JSON source) or
+            `esp32-c3-ical` (iCal source). The captive portal prompts for
+            the calendar URL on first boot — no rebuild required.
 
-            Flash:
-            ```
-            esptool.py --chip esp32c3 --port /dev/ttyACM0 \
-                       write_flash 0x10000 firmware.bin
-            ```
+      - name: Stage GitHub Pages artifact
+        run: |
+          set -euo pipefail
+          mkdir -p pages
+          cp -r docs/install pages/install
+
+          # Per-source firmware + bootloader + partition table.
+          for SRC in json ical; do
+            case "$SRC" in
+              json) ENV=esp32-c3-devkitm-1 ;;
+              ical) ENV=esp32-c3-ical ;;
+            esac
+            BUILD=".pio/build/$ENV"
+            cp "$BUILD/firmware.bin"   "pages/install/firmware-$SRC.bin"
+            cp "$BUILD/bootloader.bin" "pages/install/bootloader-$SRC.bin"
+            cp "$BUILD/partitions.bin" "pages/install/partitions-$SRC.bin"
+          done
+
+          # boot_app0.bin is shared; locate it in the framework package.
+          BOOT_APP0=$(find ~/.platformio/packages -name boot_app0.bin | head -n1)
+          cp "$BOOT_APP0" pages/install/boot_app0.bin
+
+          # Fill the version placeholder in the manifests.
+          sed -i "s/__VERSION__/${{ steps.ver.outputs.tag }}/g" pages/install/manifest-*.json
+
+          # A tiny landing page so the repo root on GitHub Pages isn't 404.
+          cat > pages/index.html <<EOF
+          <!doctype html><meta charset="utf-8"><title>MeetingNotifier</title>
+          <meta http-equiv=refresh content="0; url=install/">
+          <p>Redirecting to <a href="install/">install/</a>…</p>
+          EOF
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages
+
+      - id: deploy-pages
+        uses: actions/deploy-pages@v4
