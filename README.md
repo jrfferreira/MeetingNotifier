@@ -41,15 +41,55 @@ SPI clock runs at 40 MHz. Pin assignments live in `src/ui.h` if you need to rema
 
 ## Setup
 
-### 1. Deploy the calendar web app
+### 1. Pick a calendar source
 
-[`apps_script/Code.gs`](apps_script/Code.gs) is a small Google Apps Script that exposes the next event from your default calendar as JSON.
+| Source | When it fits | Build env | Setup time |
+| --- | --- | --- | --- |
+| **Apps Script web app** | Personal Google account, or any Workspace where Apps Script execution isn't blocked | `esp32-c3-devkitm-1` | ~3 min |
+| **iCal secret URL** | Work calendar where *Integrate calendar → Secret address* is still available | `esp32-c3-ical` | ~1 min |
+| **Local OAuth helper** | Work calendar where Apps Script *and* iCal export are disabled | `esp32-c3-devkitm-1` | ~10 min, plus a Mac / Pi that stays online |
 
-1. Open [script.google.com](https://script.google.com), create a new project, paste the contents of `apps_script/Code.gs`.
+Each option ends with a URL you'll wire into the firmware as `CALENDAR_URL`. Pick one and follow the matching subsection.
+
+#### Option A — Apps Script web app
+
+[`apps_script/Code.gs`](apps_script/Code.gs) exposes your next event as JSON.
+
+1. Open [script.google.com](https://script.google.com), create a project, paste the contents of `apps_script/Code.gs`.
 2. **Deploy → New deployment → Web app**:
    - *Execute as:* **Me**
    - *Who has access:* **Anyone**
-3. Copy the `/exec` URL.
+3. Copy the `/exec` URL. That's your `CALENDAR_URL`.
+
+#### Option B — iCal secret URL
+
+In Google Calendar: **Settings and sharing → Integrate calendar → Secret address in iCal format**. Copy the URL — that's your `CALENDAR_URL`. Build with the `esp32-c3-ical` env so the firmware uses the on-device `.ics` parser instead of the JSON one.
+
+If the *Secret address* field is missing from settings, your admin disabled iCal export; use Option C.
+
+> Caveat: the parser interprets non-UTC timestamps in the device's configured local timezone (auto-detected via ip-api). Events scheduled in *other* timezones may display at the wrong time. If that's a problem, Option C doesn't have this limitation.
+
+#### Option C — Local OAuth helper
+
+`tools/calendar_helper.py` runs on your Mac / Pi, OAuths into the Calendar API, and re-exposes the *same* JSON shape Option A produces — so the firmware doesn't care which one is on the other end of `CALENDAR_URL`.
+
+One-time setup:
+
+1. [console.cloud.google.com](https://console.cloud.google.com) → new project (free tier).
+2. **APIs & Services → Library** → enable *Google Calendar API*.
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID → Desktop app**. Download the JSON to `tools/client_secret.json` (git-ignored).
+4. ```bash
+   pip install -r tools/requirements.txt
+   python tools/calendar_helper.py auth      # opens a browser, grant read-only access
+   ```
+
+Daily use:
+
+```bash
+python tools/calendar_helper.py serve       # default: 0.0.0.0:8080
+```
+
+Your `CALENDAR_URL` is `http://<your-host>.local:8080/` (or an LAN IP if mDNS is flaky on your network). The helper needs to be reachable from the ESP32 — same WiFi is enough.
 
 ### 2. Build and flash
 
@@ -60,18 +100,22 @@ git clone https://github.com/jrfferreira/MeetingNotifier
 cd MeetingNotifier
 ```
 
-Paste your `/exec` URL into `CALENDAR_URL` in `src/calendar.h`, or override it via `build_flags` in `platformio.ini`:
+Pass your `CALENDAR_URL` via `build_flags` in `platformio.ini` (keeps the URL out of git), or paste it directly into the matching header:
 
 ```ini
+[env:esp32-c3-devkitm-1]      ; or [env:esp32-c3-ical] for Option B
 build_flags =
+  ${env.build_flags}
   -DCALENDAR_URL='"https://script.google.com/macros/s/.../exec"'
 ```
 
-Then build and flash:
+Then:
 
 ```bash
-pio run -e esp32-c3-devkitm-1 -t upload
-pio device monitor                # optional, watch the log
+pio run -e esp32-c3-devkitm-1 -t upload   # Option A or C
+# or
+pio run -e esp32-c3-ical -t upload         # Option B
+pio device monitor                          # optional, watch the log
 ```
 
 ### 3. First boot
@@ -102,14 +146,17 @@ IDLE ──── ≤ 15 min ──── SOON ──── ≤ 5 min ───�
 
 File map:
 
-| File                  | What's in it |
-| --------------------- | ------------ |
-| `src/main.cpp`        | `setup()`, `loop()`, `updateState()`, `renderScreen()`, power management |
-| `src/ui.h`            | Pin map, per-state palettes, `MeetingData`, time helpers, timing constants |
-| `src/display.h`       | ST7789 + GFX init, PWM backlight, per-state renderers, dirty-region updates |
-| `src/wifi_mgr.h`      | NVS-backed STA connect with SoftAP + DNS captive portal fallback; ip-api + NTP |
-| `src/calendar.h`      | HTTPS GET to Apps Script + ISO 8601 parser (handles both `Z` and `±HH:MM`) |
-| `apps_script/Code.gs` | Deployable Apps Script web app source |
+| File                       | What's in it |
+| -------------------------- | ------------ |
+| `src/main.cpp`             | `setup()`, `loop()`, `updateState()`, `renderScreen()`, power management |
+| `src/ui.h`                 | Pin map, per-state palettes, `MeetingData`, time helpers, timing constants |
+| `src/display.h`            | ST7789 + GFX init, PWM backlight, per-state renderers, dirty-region updates |
+| `src/wifi_mgr.h`           | NVS-backed STA connect with SoftAP + DNS captive portal fallback; ip-api + NTP |
+| `src/calendar.h`           | Dispatcher: includes `calendar_json.h` by default, `calendar_ical.h` with `-DUSE_ICAL_SOURCE` |
+| `src/calendar_json.h`      | HTTPS GET to a JSON endpoint (Apps Script *or* local helper) + ISO 8601 parser |
+| `src/calendar_ical.h`      | HTTPS GET to a `.ics` URL + VEVENT parser (line unfolding, `DTSTART/DTEND/SUMMARY/LOCATION`) |
+| `apps_script/Code.gs`      | Deployable Apps Script web app source (Option A) |
+| `tools/calendar_helper.py` | Local OAuth helper that mimics the Apps Script JSON contract (Option C) |
 
 The loop runs free — no `delay()` — and is driven by `millis()` comparisons. The display refreshes every 5 s; the calendar is polled every 60 s. `renderBigNumber` and `renderBottomStrap` only repaint when their text actually changes, so a 5 s tick is cheap when nothing has moved.
 
@@ -125,15 +172,20 @@ The interesting knobs live as `#define`s in `src/ui.h`:
 | `IMMINENT_THRESHOLD_SECS` | 300     | Enter `IMMINENT` at this many seconds out |
 | `DIM_TIMEOUT_MS`          | 60 000  | Dim backlight to 20% after this much idle (ambient states only) |
 
-`CALENDAR_URL` lives in `src/calendar.h`.
+`CALENDAR_URL` lives in `src/calendar_json.h` / `src/calendar_ical.h`; override via `build_flags` so the URL stays out of git.
 
 ## Releases
 
-Every push to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which compiles the firmware and publishes a GitHub Release tagged `vYYYY.MM.DD-<run>` with `firmware.bin` and `firmware.elf` attached.
+Every push to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which compiles both build environments and publishes a GitHub Release tagged `vYYYY.MM.DD-<run>` with both binaries attached:
 
-The published binary is built with the placeholder `CALENDAR_URL` and is useful only as a build-validation smoke test — you still need to rebuild locally with your own URL for a working device.
+| Asset                                                | Source |
+| ---------------------------------------------------- | ------ |
+| `MeetingNotifier-esp32-c3-devkitm-1-vYYYY.MM.DD-N.bin` | JSON (Apps Script or local helper) |
+| `MeetingNotifier-esp32-c3-ical-vYYYY.MM.DD-N.bin`     | iCal (`.ics`) |
 
-PRs trigger [`.github/workflows/build.yml`](.github/workflows/build.yml), which just compile-checks against the merge base.
+Both ship with the placeholder `CALENDAR_URL` baked in, so the binaries are useful only as build-validation smoke tests — you still need to rebuild locally with your own URL for a working device.
+
+PRs trigger [`.github/workflows/build.yml`](.github/workflows/build.yml), which compile-checks both envs against the merge base.
 
 ## License
 
