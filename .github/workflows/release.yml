@@ -32,8 +32,8 @@ jobs:
       - name: Install PlatformIO
         run: pip install --upgrade platformio
 
-      - name: Build firmware
-        run: pio run -e esp32-c3-devkitm-1
+      - name: Build firmware (both envs)
+        run: pio run
 
       - name: Compute tag
         id: ver
@@ -44,12 +44,15 @@ jobs:
       - name: Stage artifacts
         run: |
           mkdir release
-          BUILD=.pio/build/esp32-c3-devkitm-1
-          cp "$BUILD/firmware.bin"          "release/MeetingNotifier-${{ steps.ver.outputs.tag }}.bin"
-          cp "$BUILD/firmware.elf"          "release/MeetingNotifier-${{ steps.ver.outputs.tag }}.elf"
-          if [ -f "$BUILD/firmware.factory.bin" ]; then
-            cp "$BUILD/firmware.factory.bin" "release/MeetingNotifier-${{ steps.ver.outputs.tag }}-factory.bin"
-          fi
+          TAG="${{ steps.ver.outputs.tag }}"
+          for ENV in esp32-c3-devkitm-1 esp32-c3-ical; do
+            BUILD=".pio/build/$ENV"
+            cp "$BUILD/firmware.bin" "release/MeetingNotifier-$ENV-$TAG.bin"
+            cp "$BUILD/firmware.elf" "release/MeetingNotifier-$ENV-$TAG.elf"
+            if [ -f "$BUILD/firmware.factory.bin" ]; then
+              cp "$BUILD/firmware.factory.bin" "release/MeetingNotifier-$ENV-$TAG-factory.bin"
+            fi
+          done
 
       - uses: softprops/action-gh-release@v2
         with:
@@ -62,10 +65,14 @@ jobs:
           body: |
             Built from `${{ github.sha }}`.
 
-            > **Configure before flashing.** `firmware.bin` is built with the
-            > placeholder `CALENDAR_URL`. Edit `src/calendar.h` (or override
-            > with `-DCALENDAR_URL=…` in `platformio.ini` build flags) and
-            > rebuild locally for a working device.
+            Two firmware variants attached, both built with the placeholder
+            `CALENDAR_URL` — rebuild locally with your own URL for a working
+            device.
+
+            | Variant | Calendar source |
+            | --- | --- |
+            | `esp32-c3-devkitm-1` | JSON endpoint (Apps Script or `tools/calendar_helper.py`) |
+            | `esp32-c3-ical`      | iCal (.ics) — Google's "Secret address in iCal format" |
 
             Flash:
             ```

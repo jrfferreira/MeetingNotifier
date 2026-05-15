@@ -75,3 +75,9 @@ Testing/
 .vscode/
 .clang_complete
 .gcc-flags.json
+
+# Python helper auth artifacts
+tools/client_secret.json
+tools/.token.json
+tools/__pycache__/
+*.pyc
