@@ -43,11 +43,17 @@
       display: none;
     }
     a { color: #6cf; }
+    .version-badge {
+      font-size: .75rem; font-weight: 500; color: #8aa;
+      background: #1a1d24; padding: 2px 8px; border-radius: 999px;
+      vertical-align: middle; margin-left: 6px;
+    }
+    .version-badge:empty { display: none; }
   </style>
 </head>
 <body>
 
-<h1>Install MeetingNotifier</h1>
+<h1>Install MeetingNotifier <span id="version" class="version-badge"></span></h1>
 <p class="lead">Plug in your ESP32-C3 via USB and click Install. No PlatformIO. No Python. No terminal.</p>
 
 <div id="browser-warning" class="browser-warning">
@@ -112,6 +118,18 @@
   if (!('serial' in navigator)) {
     document.getElementById('browser-warning').style.display = 'block';
   }
+
+  // Stamped by release.yml; otherwise fall back to the GitHub Releases API.
+  fetch('version.txt', { cache: 'no-store' })
+    .then(r => r.ok ? r.text() : Promise.reject(new Error('no version.txt')))
+    .catch(() => fetch('https://api.github.com/repos/jrfferreira/MeetingNotifier/releases/latest')
+      .then(r => r.json())
+      .then(d => d.tag_name || ''))
+    .then(v => {
+      const tag = (v || '').trim();
+      if (tag) document.getElementById('version').textContent = tag;
+    })
+    .catch(() => {});
 </script>
 </body>
 </html>
