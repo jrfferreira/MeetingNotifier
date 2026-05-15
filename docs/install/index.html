@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Install MeetingNotifier</title>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0f1115; color: #e8e8ee;
+      max-width: 640px; margin: 0 auto; padding: 32px 20px 80px;
+      line-height: 1.55;
+    }
+    h1 { font-size: 1.6rem; margin-bottom: 4px; }
+    h2 { font-size: 1.05rem; margin-top: 28px; color: #aab; }
+    p, li { color: #cdd; }
+    code { background: #1a1d24; padding: 1px 6px; border-radius: 4px; font-size: .92em; }
+    .lead { color: #8aa; margin-top: 0; }
+    ol { padding-left: 20px; }
+    ol li { margin: 8px 0; }
+    .card {
+      background: #15181f; border: 1px solid #232732; border-radius: 10px;
+      padding: 18px 20px; margin: 14px 0;
+    }
+    .card h3 { margin: 0 0 8px; font-size: 1rem; }
+    .card p { margin: 0 0 12px; color: #9ab; font-size: .92rem; }
+    esp-web-install-button { --esp-tools-button-color: #4af; }
+    esp-web-install-button::part(button) {
+      background: #4af; color: #000; border: 0; padding: 10px 18px;
+      border-radius: 6px; font-weight: 600; cursor: pointer;
+    }
+    .note {
+      background: #1a1f17; border-left: 3px solid #6a8;
+      padding: 10px 14px; margin: 18px 0; border-radius: 4px;
+      font-size: .9rem; color: #adc;
+    }
+    .browser-warning {
+      background: #1f1818; border-left: 3px solid #c66;
+      padding: 10px 14px; margin: 18px 0; border-radius: 4px;
+      font-size: .9rem; color: #fcc;
+      display: none;
+    }
+    a { color: #6cf; }
+  </style>
+</head>
+<body>
+
+<h1>Install MeetingNotifier</h1>
+<p class="lead">Plug in your ESP32-C3 via USB and click Install. No PlatformIO. No Python. No terminal.</p>
+
+<div id="browser-warning" class="browser-warning">
+  Your browser doesn't support WebSerial. Use <strong>Chrome</strong>, <strong>Edge</strong>, or <strong>Opera</strong> on a desktop computer (not iOS / Android).
+</div>
+
+<h2>1. Pick your calendar source</h2>
+<p>Same choice as the <a href="https://github.com/jrfferreira/MeetingNotifier#1-pick-a-calendar-source">README</a>. Pick the one your calendar admin allows; if unsure, try <strong>Apps Script / helper</strong> first.</p>
+
+<div class="card">
+  <h3>Apps Script web app, or local helper</h3>
+  <p>For personal Google Calendars, or work calendars where you'll run the local OAuth helper. Wired up over plain HTTP/HTTPS to a JSON endpoint.</p>
+  <esp-web-install-button manifest="manifest-json.json"></esp-web-install-button>
+</div>
+
+<div class="card">
+  <h3>iCal secret URL</h3>
+  <p>For work calendars where Google's <em>Settings → Integrate calendar → Secret address in iCal format</em> still appears. Fetches and parses <code>.ics</code> on-device.</p>
+  <esp-web-install-button manifest="manifest-ical.json"></esp-web-install-button>
+</div>
+
+<h2>2. Configure WiFi and your calendar URL</h2>
+<p>After flashing, the device boots into setup mode and creates a WiFi network called <code>MeetingNotifier-Setup</code>.</p>
+<ol>
+  <li>On your phone, join the <code>MeetingNotifier-Setup</code> network.</li>
+  <li>A setup page should pop up automatically. If not, open <a href="http://192.168.4.1">http://192.168.4.1</a>.</li>
+  <li>Enter your home / office WiFi name and password.</li>
+  <li>Paste your calendar URL (the Apps Script <code>/exec</code> URL, the Google iCal "secret address", or your local helper's <code>http://&lt;host&gt;:8080/</code>).</li>
+  <li>Tap <strong>Save and reboot</strong>. The device reboots, joins your WiFi, and starts polling.</li>
+</ol>
+
+<div class="note">
+  <strong>Need to change WiFi or URL later?</strong> Hold <code>BOOT</code> and tap <code>RST</code> while powered to factory-reset, then run setup again. (Coming in a future release: a way to re-open setup without erasing.)
+</div>
+
+<h2>Wiring</h2>
+<p>If you haven't wired the display yet:</p>
+<table style="border-collapse:collapse;width:100%;margin-top:8px">
+  <thead>
+    <tr style="text-align:left;color:#8aa;font-size:.85rem;border-bottom:1px solid #232732">
+      <th style="padding:6px 8px">Display pin</th>
+      <th style="padding:6px 8px">ESP32-C3 GPIO</th>
+    </tr>
+  </thead>
+  <tbody style="font-size:.92rem">
+    <tr><td style="padding:4px 8px">SCLK</td><td style="padding:4px 8px">GPIO 6</td></tr>
+    <tr><td style="padding:4px 8px">MOSI / SDA</td><td style="padding:4px 8px">GPIO 7</td></tr>
+    <tr><td style="padding:4px 8px">CS</td><td style="padding:4px 8px">GPIO 10</td></tr>
+    <tr><td style="padding:4px 8px">DC / RS</td><td style="padding:4px 8px">GPIO 3</td></tr>
+    <tr><td style="padding:4px 8px">RST</td><td style="padding:4px 8px">GPIO 4</td></tr>
+    <tr><td style="padding:4px 8px">BLK (backlight)</td><td style="padding:4px 8px">GPIO 5</td></tr>
+    <tr><td style="padding:4px 8px">VCC</td><td style="padding:4px 8px">3V3</td></tr>
+    <tr><td style="padding:4px 8px">GND</td><td style="padding:4px 8px">GND</td></tr>
+  </tbody>
+</table>
+
+<p style="color:#8aa;font-size:.85rem;margin-top:32px">
+  Source: <a href="https://github.com/jrfferreira/MeetingNotifier">github.com/jrfferreira/MeetingNotifier</a>
+</p>
+
+<script>
+  if (!('serial' in navigator)) {
+    document.getElementById('browser-warning').style.display = 'block';
+  }
+</script>
+</body>
+</html>

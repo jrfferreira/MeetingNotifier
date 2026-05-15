@@ -10,15 +10,12 @@
 #include <time.h>
 
 #include "ui.h"
+#include "config_store.h"
 
 // ---------------------------------------------------------------------------
-// Persistent WiFi credentials live in NVS namespace "wifi".
-// Captive portal SSID is "MeetingNotifier-Setup", no password.
+// Persistent WiFi credentials live in NVS namespace CFG_NS (config_store.h),
+// alongside the calendar URL. Captive portal SSID is "MeetingNotifier-Setup".
 // ---------------------------------------------------------------------------
-#define WM_NAMESPACE     "wifi"
-#define WM_KEY_SSID      "ssid"
-#define WM_KEY_PASS      "pass"
-
 #define WM_AP_SSID       "MeetingNotifier-Setup"
 #define WM_CONNECT_MS    20000UL
 #define WM_DNS_PORT      53
@@ -35,37 +32,43 @@ inline bool wifiOnline() { return wmConnected && WiFi.status() == WL_CONNECTED; 
 inline bool wifiPortalActive() { return wmPortalActive; }
 
 // ---------------------------------------------------------------------------
-// NVS helpers
+// NVS helpers (WiFi creds; calendar URL lives in config_store.h)
 // ---------------------------------------------------------------------------
 inline void wmLoadCreds(String& ssid, String& pass) {
-  wmPrefs.begin(WM_NAMESPACE, true);
-  ssid = wmPrefs.getString(WM_KEY_SSID, "");
-  pass = wmPrefs.getString(WM_KEY_PASS, "");
+  wmPrefs.begin(CFG_NS, true);
+  ssid = wmPrefs.getString(CFG_KEY_SSID, "");
+  pass = wmPrefs.getString(CFG_KEY_PASS, "");
   wmPrefs.end();
 }
 
 inline void wmSaveCreds(const String& ssid, const String& pass) {
-  wmPrefs.begin(WM_NAMESPACE, false);
-  wmPrefs.putString(WM_KEY_SSID, ssid);
-  wmPrefs.putString(WM_KEY_PASS, pass);
+  wmPrefs.begin(CFG_NS, false);
+  wmPrefs.putString(CFG_KEY_SSID, ssid);
+  wmPrefs.putString(CFG_KEY_PASS, pass);
   wmPrefs.end();
 }
 
 // ---------------------------------------------------------------------------
-// Captive portal HTML — minimal SSID/pass form.
+// Captive portal HTML — SSID, password, calendar URL.
 // ---------------------------------------------------------------------------
 static const char WM_PORTAL_HTML[] PROGMEM =
   "<!doctype html><html><head><meta name=viewport content='width=device-width'>"
-  "<title>MeetingNotifier</title>"
+  "<title>MeetingNotifier setup</title>"
   "<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;"
-  "padding:24px;max-width:340px;margin:auto}h1{font-size:1.2rem}"
+  "padding:24px;max-width:380px;margin:auto}h1{font-size:1.2rem}"
+  "label{display:block;margin-top:10px;font-size:.9rem;color:#aaa}"
   "input{width:100%;padding:8px;margin:4px 0;border-radius:6px;border:1px solid #444;"
-  "background:#222;color:#eee}button{width:100%;padding:10px;margin-top:12px;"
-  "border-radius:6px;border:0;background:#4af;color:#000;font-weight:600}</style>"
+  "background:#222;color:#eee;box-sizing:border-box}"
+  "small{color:#888;font-size:.8rem;display:block;margin-top:2px}"
+  "button{width:100%;padding:10px;margin-top:14px;border-radius:6px;border:0;"
+  "background:#4af;color:#000;font-weight:600;font-size:1rem}</style>"
   "</head><body><h1>MeetingNotifier setup</h1>"
   "<form method=POST action=/save>"
-  "<label>SSID<input name=ssid required></label>"
-  "<label>Password<input name=pass type=password></label>"
+  "<label>WiFi network<input name=ssid required></label>"
+  "<label>WiFi password<input name=pass type=password></label>"
+  "<label>Calendar URL<input name=cal required>"
+  "<small>Apps Script /exec URL, iCal secret URL, or local helper "
+  "http://host:8080/</small></label>"
   "<button type=submit>Save and reboot</button></form></body></html>";
 
 inline void wmHandleRoot()  { wmHttp.send_P(200, "text/html", WM_PORTAL_HTML); }
@@ -73,11 +76,13 @@ inline void wmHandleRoot()  { wmHttp.send_P(200, "text/html", WM_PORTAL_HTML); }
 inline void wmHandleSave() {
   String ssid = wmHttp.arg("ssid");
   String pass = wmHttp.arg("pass");
-  if (ssid.length() == 0) {
-    wmHttp.send(400, "text/plain", "ssid required");
+  String cal  = wmHttp.arg("cal");
+  if (ssid.length() == 0 || cal.length() == 0) {
+    wmHttp.send(400, "text/plain", "ssid and cal required");
     return;
   }
   wmSaveCreds(ssid, pass);
+  cfgSetCalendarUrl(cal);
   wmHttp.send(200, "text/html",
               "<html><body style='font-family:sans-serif;background:#111;color:#eee;"
               "padding:24px'>Saved. Rebooting…</body></html>");
@@ -91,6 +96,8 @@ inline void wmHandleNotFound() {
 }
 
 inline void wmStartPortal() {
+  if (wmPortalActive) return;
+  WiFi.disconnect(true, false);
   WiFi.mode(WIFI_AP);
   WiFi.softAP(WM_AP_SSID);
   IPAddress ip = WiFi.softAPIP();
@@ -102,6 +109,7 @@ inline void wmStartPortal() {
   wmHttp.onNotFound(wmHandleNotFound);
   wmHttp.begin();
   wmPortalActive = true;
+  wmConnected    = false;
 }
 
 inline void wmPortalLoop() {
@@ -172,8 +180,6 @@ inline bool wmConfigureTimeViaIpApi() {
         (const char*)(doc["countryCode"] | ""),
         wmTzBuf);
 
-  // POSIX-style IANA name doesn't load DST rules on its own; setenv("TZ", ...)
-  // with an IANA name only works because esp-idf bundles tzdata.
   configTzTime(wmTzBuf, "pool.ntp.org", "time.nist.gov");
   return true;
 }
@@ -183,7 +189,7 @@ inline bool wmAwaitNtp(uint32_t timeoutMs = 10000) {
   time_t now = 0;
   while (millis() - start < timeoutMs) {
     now = time(nullptr);
-    if (now > 1700000000) {     // some plausible epoch after 2023
+    if (now > 1700000000) {
       log_i("NTP sync ok: %ld", (long)now);
       return true;
     }
@@ -196,14 +202,18 @@ inline bool wmAwaitNtp(uint32_t timeoutMs = 10000) {
 inline const char* wmTimezone() { return wmTzBuf; }
 
 // ---------------------------------------------------------------------------
-// Boot-time entry point: try stored creds, otherwise start portal.
+// Boot-time entry point. We need BOTH WiFi creds and a calendar URL —
+// missing either drops us into the captive portal.
 // ---------------------------------------------------------------------------
 inline void wifiBoot() {
-  if (wmConnectStored()) {
+  bool wifiOK = wmConnectStored();
+  if (wifiOK) {
     wmConfigureTimeViaIpApi();
     wmAwaitNtp();
-    return;
   }
-  log_w("no stored creds or connect failed → portal");
-  wmStartPortal();
+  if (!wifiOK || !cfgHasCalendarUrl()) {
+    log_w("setup needed (wifi=%d, url=%d) → portal",
+          (int)wifiOK, (int)cfgHasCalendarUrl());
+    wmStartPortal();
+  }
 }
