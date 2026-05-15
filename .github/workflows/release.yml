@@ -107,8 +107,8 @@ jobs:
           BOOT_APP0=$(find ~/.platformio/packages -name boot_app0.bin | head -n1)
           cp "$BOOT_APP0" pages/install/boot_app0.bin
 
-          # Fill the version placeholder in the manifests.
-          sed -i "s/__VERSION__/${{ steps.ver.outputs.tag }}/g" pages/install/manifest-*.json
+          # Stamp the version into a static file the install page fetches.
+          echo "${{ steps.ver.outputs.tag }}" > pages/install/version.txt
 
           # A tiny landing page so the repo root on GitHub Pages isn't 404.
           cat > pages/index.html <<EOF
