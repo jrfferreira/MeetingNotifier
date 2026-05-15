@@ -1,123 +1,132 @@
 // Display pin-map probe for integrated "ESP32-C3 + 1.44 inch TFT" boards.
 //
-// Cycles through a handful of candidate pin / driver combinations every few
-// seconds. Each attempt fills the screen with a distinct colour and labels
-// itself with a combo number. The one that renders readably tells you which
-// pin map matches your board — report the combo number back and we'll bake
-// it into a permanent build env.
+// This board's K1/K2 header exposes GPIO 1, 6, 7, 10, 20, 21 — so the
+// display is wired to some subset of the remaining usable GPIOs:
+// {0, 2, 3, 4, 5, 8}. GPIO 11-17 are reserved for SPI flash on the
+// MINI-1 module; 9 is BOOT; 18/19 are USB. So those are off-limits.
 //
-// Built into a separate firmware variant (esp32-c3-probe) so it can be
-// flashed via the same web flasher as the main firmware.
+// Each combo lasts ~6s, fills the screen with a distinct background
+// colour, and prints a large combo number on-screen and to USB-CDC.
+// Note the combo number that lights up readably and report it back —
+// we'll bake that pin map into a permanent build env.
+//
+// Build: `[env:esp32-c3-probe]` in platformio.ini.
 
 #include <Arduino.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
-#include <Adafruit_ST7789.h>
 
 struct Combo {
-  const char* label;
-  int8_t      sclk;
-  int8_t      mosi;
-  int8_t      dc;
-  int8_t      cs;     // -1 means tied / not used
-  int8_t      rst;    // -1 means tied / not used
-  int8_t      bl;     // -1 means tied / always-on
-  bool        is7789; // false → ST7735 144 green tab (128x128)
-  uint16_t    bg;
+  uint8_t       num;
+  const char*   label;
+  int8_t        sclk;
+  int8_t        mosi;
+  int8_t        dc;
+  int8_t        cs;    // -1 = tied / unused
+  int8_t        rst;   // -1 = tied / unused
+  int8_t        bl;    // -1 = tied / unused
+  uint8_t       tab;   // INITR_*
+  uint16_t      bg;
 };
 
 static const Combo kCombos[] = {
-  {"C1 ST35  SCLK=2 MOSI=3 DC=4 CS=- RST=5 BL=11",
-     2, 3, 4, -1,  5, 11, false, ST77XX_BLUE},
-  {"C2 ST35  SCLK=2 MOSI=3 DC=5 CS=- RST=4 BL=11",
-     2, 3, 5, -1,  4, 11, false, ST77XX_MAGENTA},
-  {"C3 ST35  SCLK=4 MOSI=5 DC=3 CS=- RST=2 BL=11",
-     4, 5, 3, -1,  2, 11, false, ST77XX_GREEN},
-  {"C4 ST35  SCLK=2 MOSI=3 DC=4 CS=5 RST=11 BL=0",
-     2, 3, 4,  5, 11,  0, false, ST77XX_ORANGE},
-  {"C5 ST35  SCLK=2 MOSI=3 DC=4 CS=- RST=5 BL=-",
-     2, 3, 4, -1,  5, -1, false, ST77XX_CYAN},
-  {"C6 ST89  SCLK=6 MOSI=7 DC=3 CS=10 RST=4 BL=5  (orig)",
-     6, 7, 3, 10,  4,  5, true,  ST77XX_RED},
+  // Most likely first: 2/3 are typical SPI pins on cheap C3 modules
+  { 1, "SCLK=2 MOSI=3 DC=4 RST=5 BL=8 GREEN",
+       2,  3,  4, -1,  5,  8, INITR_144GREENTAB, ST77XX_BLUE      },
+  { 2, "SCLK=2 MOSI=3 DC=5 RST=4 BL=8 GREEN",
+       2,  3,  5, -1,  4,  8, INITR_144GREENTAB, ST77XX_MAGENTA   },
+  { 3, "SCLK=2 MOSI=3 DC=4 RST=5 CS=0 BL=8 GREEN",
+       2,  3,  4,  0,  5,  8, INITR_144GREENTAB, ST77XX_GREEN     },
+  { 4, "SCLK=2 MOSI=3 DC=4 RST=5 BL=8 RED",
+       2,  3,  4, -1,  5,  8, INITR_REDTAB,      ST77XX_ORANGE    },
+  { 5, "SCLK=4 MOSI=5 DC=3 RST=2 BL=8 GREEN",
+       4,  5,  3, -1,  2,  8, INITR_144GREENTAB, ST77XX_CYAN      },
+  { 6, "SCLK=2 MOSI=3 DC=4 CS=5 RST=0 BL=8 GREEN",
+       2,  3,  4,  5,  0,  8, INITR_144GREENTAB, ST77XX_YELLOW    },
+  { 7, "SCLK=2 MOSI=3 DC=4 RST=5 BL=0 GREEN",
+       2,  3,  4, -1,  5,  0, INITR_144GREENTAB, ST77XX_WHITE     },
 };
 
-static const int  kNumCombos = sizeof(kCombos) / sizeof(kCombos[0]);
-static const uint32_t kHoldMs = 7000;
+static const int      kNumCombos = sizeof(kCombos) / sizeof(kCombos[0]);
+static const uint32_t kHoldMs    = 6000;
 
-static int           gIdx        = 0;
-static uint32_t      gLastSwitch = 0;
-static Adafruit_GFX* gTft        = nullptr;
+static int                 gIdx        = 0;
+static uint32_t            gLastSwitch = 0;
+static Adafruit_ST7735*    gTft        = nullptr;
 
-static void freeTft() {
-  if (!gTft) return;
-  delete gTft;
-  gTft = nullptr;
-}
-
-static void renderLabel(Adafruit_GFX* tft, const Combo& c, int w, int h) {
-  tft->setTextWrap(false);
-  tft->setTextColor(ST77XX_WHITE);
-  tft->setTextSize(1);
-
-  tft->setCursor(2, 2);
-  tft->printf("Combo %d / %d", gIdx + 1, kNumCombos);
-
-  // Label might be longer than the panel; the wrap-off setting clips it.
-  tft->setCursor(2, 16);
-  tft->print(c.label);
-
-  tft->setCursor(2, h - 24);
-  tft->print("If this is readable,");
-  tft->setCursor(2, h - 12);
-  tft->printf("note: C%d", gIdx + 1);
-}
-
-static void tryCombo(const Combo& c) {
-  Serial.printf("\n[probe] %s\n", c.label);
-
-  // Speculative backlight enable — drive a few common BL candidates HIGH so
-  // we don't stay dark just because we guessed the BL pin wrong.
-  for (int pin : { 0, 11 }) {
+static void forceCandidateBacklights() {
+  // Drive every plausible backlight pin HIGH at startup. If the actual BL
+  // pin is one of these and isn't used elsewhere by the current combo, the
+  // panel will be lit even when the combo guesses BL wrong.
+  for (int pin : { 0, 5, 8 }) {
     pinMode(pin, OUTPUT);
     digitalWrite(pin, HIGH);
   }
+}
+
+static void freeTft() {
+  if (gTft) { delete gTft; gTft = nullptr; }
+}
+
+static void renderCombo(const Combo& c) {
+  if (!gTft) return;
+
+  gTft->fillScreen(c.bg);
+
+  // Big numeric label that's readable even if init/colour is slightly off.
+  gTft->setTextWrap(false);
+  gTft->setTextColor(ST77XX_WHITE);
+  gTft->setTextSize(6);
+  gTft->setCursor(28, 8);
+  gTft->printf("C%u", c.num);
+
+  // Pin map in tiny text below.
+  gTft->setTextSize(1);
+  gTft->setCursor(2, 70);
+  gTft->print(c.label);
+
+  // Instruction strap.
+  gTft->setCursor(2, 100);
+  gTft->print("If readable,");
+  gTft->setCursor(2, 112);
+  gTft->printf("note: C%u", c.num);
+}
+
+static void tryCombo(const Combo& c) {
+  Serial.printf("\n[probe] C%u — %s\n", c.num, c.label);
+
   if (c.bl >= 0) {
     pinMode(c.bl, OUTPUT);
     digitalWrite(c.bl, HIGH);
   }
 
   freeTft();
-
-  if (c.is7789) {
-    auto* tft = new Adafruit_ST7789(c.cs, c.dc, c.mosi, c.sclk, c.rst);
-    tft->init(240, 240, SPI_MODE0);
-    tft->setRotation(2);
-    tft->fillScreen(c.bg);
-    renderLabel(tft, c, 240, 240);
-    gTft = tft;
-  } else {
-    auto* tft = new Adafruit_ST7735(c.cs, c.dc, c.mosi, c.sclk, c.rst);
-    tft->initR(INITR_144GREENTAB);
-    tft->setRotation(2);
-    tft->fillScreen(c.bg);
-    renderLabel(tft, c, 128, 128);
-    gTft = tft;
-  }
+  gTft = new Adafruit_ST7735(c.cs, c.dc, c.mosi, c.sclk, c.rst);
+  gTft->initR(c.tab);
+  gTft->setRotation(2);
+  renderCombo(c);
 }
 
 void setup() {
   Serial.begin(115200);
-  delay(400);
+  // USB-CDC needs a moment after enumeration before the host opens the port.
+  uint32_t t0 = millis();
+  while (!Serial && millis() - t0 < 2000) delay(50);
+
   Serial.println();
-  Serial.println("===========================================");
-  Serial.println(" MeetingNotifier — display pin-map probe");
-  Serial.println("===========================================");
-  Serial.printf(" Cycling %d combos every %lus.\n",
-                kNumCombos, (unsigned long)(kHoldMs / 1000));
-  Serial.println(" Watch the screen. Note the combo number");
-  Serial.println(" of the one that renders readable text.");
+  Serial.println("============================================");
+  Serial.println(" MeetingNotifier - display pin-map probe v2");
+  Serial.println("============================================");
+  Serial.printf(" Cycling %d combos x %lus each (~%lus total).\n",
+                kNumCombos,
+                (unsigned long)(kHoldMs / 1000),
+                (unsigned long)((kHoldMs * kNumCombos) / 1000));
+  Serial.println(" Pins probed: SCLK/MOSI/DC/RST/CS/BL from {0,2,3,4,5,8}");
+  Serial.println(" Note the combo number (\"Cn\") that renders");
+  Serial.println(" readable text on the panel.");
   Serial.println();
 
+  forceCandidateBacklights();
   tryCombo(kCombos[gIdx]);
   gLastSwitch = millis();
 }
