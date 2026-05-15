@@ -4,17 +4,33 @@
 #include <time.h>
 
 // ---------------------------------------------------------------------------
-// Pin map (ESP32-C3 → ST7789 1.4" 240×240)
+// Pin map. Two boards supported, switched at compile time:
+//
+//   default (standalone ST7789 240×240 module, e.g. for ESP32-C3-DevKitM-1)
+//   BOARD_SPOTPEAR_C3_144 — Spotpear / Fikra "ESP32-C3 com Display Integrado
+//     1.44 Polegadas", confirmed via seller-supplied schematic. 128×128
+//     ST7735, backlight hardwired to 3V3 (no PWM).
 // ---------------------------------------------------------------------------
-#define PIN_SCLK  6
-#define PIN_MOSI  7
-#define PIN_CS    10
-#define PIN_DC    3
-#define PIN_RST   4
-#define PIN_BLK   5
-
-#define TFT_W     240
-#define TFT_H     240
+#if defined(BOARD_SPOTPEAR_C3_144)
+  #define PIN_SCLK  3
+  #define PIN_MOSI  4
+  #define PIN_CS    2
+  #define PIN_DC    10
+  #define PIN_RST   5
+  #define PIN_BLK   -1     // hardwired via R11/L12_1, no GPIO control
+  #define TFT_W     128
+  #define TFT_H     128
+  #define USE_ST7735_144
+#else
+  #define PIN_SCLK  6
+  #define PIN_MOSI  7
+  #define PIN_CS    10
+  #define PIN_DC    3
+  #define PIN_RST   4
+  #define PIN_BLK   5
+  #define TFT_W     240
+  #define TFT_H     240
+#endif
 
 // ---------------------------------------------------------------------------
 // Backlight PWM
