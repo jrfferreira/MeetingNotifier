@@ -1,0 +1,177 @@
+// MeetingNotifier — ESP32-C3 + ST7789 ambient display.
+//
+// Polls Google Calendar via an Apps Script web app every 60 s and
+// transitions through five display states based on meeting proximity.
+// Loop runs free — no delay() — FreeRTOS feeds the watchdog.
+
+#include <Arduino.h>
+#include <esp_sleep.h>
+
+#include "ui.h"
+#include "display.h"
+#include "wifi_mgr.h"
+#include "calendar.h"
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+static DisplayState state     = STATE_LOADING;
+static DisplayState prevState = STATE_LOADING;
+static MeetingData  meeting   = { false, "", "", "", 0, 0, 0 };
+
+static uint32_t lastCalendarFetch = 0;
+static uint32_t lastDisplayRefresh = 0;
+static uint32_t lastStateChange   = 0;
+static uint8_t  pulsePhase        = 0;
+static bool     dimmed            = false;
+
+// ---------------------------------------------------------------------------
+// State transitions — pure function of (wifi, meeting, now).
+// ---------------------------------------------------------------------------
+static void updateState() {
+  if (!wifiOnline()) {
+    state = STATE_NO_WIFI;
+    return;
+  }
+  if (!meeting.valid) {
+    state = STATE_LOADING;
+    return;
+  }
+  if (strcmp(meeting.status, "clear") == 0) {
+    state = STATE_ALL_CLEAR;
+    return;
+  }
+
+  time_t now = time(nullptr);
+
+  if (strcmp(meeting.status, "in_meeting") == 0) {
+    state = STATE_IN_MEETING;
+    if (now > meeting.endTime && meeting.remainingToday == 0) {
+      state = STATE_ALL_CLEAR;
+    }
+    return;
+  }
+
+  long secsUntil = (long)(meeting.startTime - now);
+  if      (secsUntil <= 0)                       state = STATE_IN_MEETING;
+  else if (secsUntil <= IMMINENT_THRESHOLD_SECS) state = STATE_IMMINENT;
+  else if (secsUntil <= SOON_THRESHOLD_SECS)     state = STATE_SOON;
+  else                                            state = STATE_IDLE;
+}
+
+// ---------------------------------------------------------------------------
+// Render dispatch.
+// ---------------------------------------------------------------------------
+static void renderScreen() {
+  bool fresh = (state != prevState);
+  if (fresh) {
+    log_i("state: %s → %s", stateName(prevState), stateName(state));
+    prevState        = state;
+    lastStateChange  = millis();
+    backlightSet(BLK_FULL);
+    dimmed = false;
+  }
+
+  switch (state) {
+    case STATE_LOADING:    drawLoading(fresh);                       break;
+    case STATE_NO_WIFI:    drawNoWifi(fresh);                        break;
+    case STATE_IDLE:       drawIdle(meeting, fresh);                 break;
+    case STATE_SOON:       drawSoon(meeting, fresh);                 break;
+    case STATE_IMMINENT:   drawImminent(meeting, fresh, pulsePhase); break;
+    case STATE_IN_MEETING: drawInMeeting(meeting, fresh);            break;
+    case STATE_ALL_CLEAR:  drawAllClear(fresh);                      break;
+  }
+  pulsePhase = (pulsePhase + 1) & 0x7;
+}
+
+// ---------------------------------------------------------------------------
+// "Awake" means: countdown is live or meeting is running. Other states are
+// quiet enough to dim/sleep through.
+// ---------------------------------------------------------------------------
+static bool shouldStayAwake() {
+  return state == STATE_SOON ||
+         state == STATE_IMMINENT ||
+         state == STATE_IN_MEETING;
+}
+
+// ---------------------------------------------------------------------------
+// Power management — runs each tick, no sleep while a meeting is imminent.
+// ---------------------------------------------------------------------------
+static void powerTick() {
+  if (shouldStayAwake()) {
+    if (dimmed) { backlightSet(BLK_FULL); dimmed = false; }
+    return;
+  }
+
+  uint32_t idleMs = millis() - lastStateChange;
+  if (idleMs > DIM_TIMEOUT_MS && !dimmed) {
+    backlightSet(BLK_DIM);
+    dimmed = true;
+  }
+  // SLEEP_TIMEOUT_MS handled passively: when display is dim, idle current draw
+  // is already low; explicit esp_light_sleep is left as a future enhancement
+  // since the ST7789 needs full reinit after deep sleep and would flicker.
+}
+
+// ---------------------------------------------------------------------------
+// Calendar refresh + state recompute.
+// ---------------------------------------------------------------------------
+static void doFetch() {
+  if (!wifiOnline()) return;
+  MeetingData fresh = meeting;
+  if (calendarFetch(fresh)) {
+    meeting = fresh;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+void setup() {
+  Serial.begin(115200);
+  delay(50);
+  log_i("MeetingNotifier boot");
+
+  displayInit();
+  drawLoading(true);
+
+  wifiBoot();        // connect from NVS or start captive portal
+
+  if (wifiOnline()) {
+    doFetch();
+    updateState();
+  } else {
+    state = STATE_NO_WIFI;
+  }
+  renderScreen();
+
+  lastCalendarFetch  = millis();
+  lastDisplayRefresh = millis();
+  lastStateChange    = millis();
+}
+
+// ---------------------------------------------------------------------------
+// Loop — no delay(); cadence is timer-driven.
+// ---------------------------------------------------------------------------
+void loop() {
+  // Captive portal: handle DNS + HTTP requests, skip the rest until the user
+  // finishes setup (then we ESP.restart() from the save handler).
+  if (wifiPortalActive()) {
+    wmPortalLoop();
+    return;
+  }
+
+  uint32_t now = millis();
+
+  if (now - lastDisplayRefresh >= REFRESH_INTERVAL_MS) {
+    lastDisplayRefresh = now;
+    updateState();
+    renderScreen();
+    powerTick();
+  }
+
+  if (now - lastCalendarFetch >= POLL_INTERVAL_MS) {
+    lastCalendarFetch = now;
+    doFetch();
+  }
+}
