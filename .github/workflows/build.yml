@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        env: [esp32-c3-devkitm-1, esp32-c3-ical]
+        env: [esp32-c3-devkitm-1, esp32-c3-ical, esp32-c3-probe]
     steps:
       - uses: actions/checkout@v4
 

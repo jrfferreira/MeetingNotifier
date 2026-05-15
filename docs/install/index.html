@@ -75,6 +75,12 @@
   <esp-web-install-button manifest="manifest-ical.json"></esp-web-install-button>
 </div>
 
+<div class="card">
+  <h3>My display is blank / I have an integrated ESP32-C3 + TFT board</h3>
+  <p>If you bought a small board with the display baked into the PCB (Univision / "ESP32-C3 com Display Integrado 1.44"), the GPIOs are wired differently than the standalone modules. This <strong>probe firmware</strong> cycles through candidate pin maps every ~7 seconds and labels each one on the screen. Note which combo number renders readable text, then <a href="https://github.com/jrfferreira/MeetingNotifier/issues/new">open an issue</a> with that number — we'll bake the matching pin map into a permanent build variant.</p>
+  <esp-web-install-button manifest="manifest-probe.json"></esp-web-install-button>
+</div>
+
 <h2>2. Configure WiFi and your calendar URL</h2>
 <p>After flashing, the device boots into setup mode and creates a WiFi network called <code>MeetingNotifier-Setup</code>.</p>
 <ol>
