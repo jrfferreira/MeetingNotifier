@@ -17,7 +17,7 @@
 // heap copy + the WiFi event handlers that fire repeatedly on AUTH_FAIL,
 // and -DCONFIG_ARDUINO_LOOP_STACK_SIZE build flags don't reliably override
 // the SDK config in PlatformIO. This weak-symbol path does.
-extern "C" size_t getArduinoLoopTaskStackSize() { return 32 * 1024; }
+size_t getArduinoLoopTaskStackSize() { return 32 * 1024; }
 
 // ---------------------------------------------------------------------------
 // State
