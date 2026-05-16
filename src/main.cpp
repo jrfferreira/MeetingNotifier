@@ -170,7 +170,16 @@ void loop() {
 
   uint32_t now = millis();
 
-  if (now - lastDisplayRefresh >= REFRESH_INTERVAL_MS) {
+  // Active states (countdown / elapsed timer visible) tick at 1 s so the
+  // MM:SS digits don't jump in 5 s steps. Ambient states (clock only
+  // changes per-minute) stay at the cheaper 5 s.
+  uint32_t refreshMs = (state == STATE_SOON ||
+                        state == STATE_IMMINENT ||
+                        state == STATE_IN_MEETING)
+                       ? REFRESH_FAST_INTERVAL_MS
+                       : REFRESH_INTERVAL_MS;
+
+  if (now - lastDisplayRefresh >= refreshMs) {
     lastDisplayRefresh = now;
     updateState();
     renderScreen();
