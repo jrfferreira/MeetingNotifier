@@ -22,6 +22,13 @@
   #define TFT_W     128
   #define TFT_H     128
   #define USE_ST7735_144
+  // Buttons. K1 is a clean GPIO (8 — strapping pin, must be HIGH at boot;
+  // pull-up is handled internally by INPUT_PULLUP). K2 is intentionally
+  // unmapped: the board ties it to GPIO 10 alongside LCD_DC, so any LCD
+  // activity toggles the "button" line. Pressing K2 would also short the
+  // DC output to GND — unusable at best, damaging at worst.
+  #define PIN_K1    8
+  #define PIN_K2    -1
 #else
   #define PIN_SCLK  6
   #define PIN_MOSI  7
@@ -31,6 +38,8 @@
   #define PIN_BLK   5
   #define TFT_W     240
   #define TFT_H     240
+  #define PIN_K1    -1     // standalone module has no built-in buttons
+  #define PIN_K2    -1
 #endif
 
 // ---------------------------------------------------------------------------

@@ -17,11 +17,21 @@
 #define CFG_KEY_PASS     "pass"
 #define CFG_KEY_CAL_URL  "cal"
 
-// Read-only accessor. Returns the NVS-stored URL if present; otherwise
-// falls back to the compile-time CALENDAR_URL macro (so legacy builds
-// with `-DCALENDAR_URL='"…"'` keep working). The placeholder URL counts
-// as "not set" so first-boot still triggers the portal.
+// In-RAM cache of the calendar URL so the fetcher doesn't have to open
+// NVS on every poll. Initialised lazily on first read; the captive
+// portal save handler invalidates it (cfgSetCalendarUrl() resets the
+// cached value alongside the NVS write).
+static bool   g_cfgUrlCached = false;
+static String g_cfgUrlCache;
+
+inline void cfgInvalidateCache() {
+  g_cfgUrlCached = false;
+  g_cfgUrlCache  = String();
+}
+
 inline String cfgGetCalendarUrl() {
+  if (g_cfgUrlCached) return g_cfgUrlCache;
+
   Preferences p;
   p.begin(CFG_NS, true);
   String url = p.getString(CFG_KEY_CAL_URL, "");
@@ -32,8 +42,13 @@ inline String cfgGetCalendarUrl() {
     url = CALENDAR_URL;
 #endif
   }
+  // Sentinel scrubbing: a default-build CALENDAR_URL contains "REPLACE_ME"
+  // and should be treated as "not set" so first-boot drops to the portal.
   if (url.indexOf("REPLACE_ME") >= 0) url = "";
-  return url;
+
+  g_cfgUrlCache  = url;
+  g_cfgUrlCached = true;
+  return g_cfgUrlCache;
 }
 
 inline void cfgSetCalendarUrl(const String& url) {
@@ -41,6 +56,7 @@ inline void cfgSetCalendarUrl(const String& url) {
   p.begin(CFG_NS, false);
   p.putString(CFG_KEY_CAL_URL, url);
   p.end();
+  cfgInvalidateCache();
 }
 
 inline bool cfgHasCalendarUrl() {

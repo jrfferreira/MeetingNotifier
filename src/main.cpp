@@ -5,12 +5,15 @@
 // Loop runs free — no delay() — FreeRTOS feeds the watchdog.
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <esp_sleep.h>
 
 #include "ui.h"
 #include "display.h"
 #include "wifi_mgr.h"
 #include "calendar.h"
+#include "config_store.h"
+#include "buttons.h"
 
 // Override Arduino-ESP32's weak symbol so loopTask gets a 32 KB stack.
 // The 8 KB default is tight once we add USB-CDC + ArduinoJson + the iCal
@@ -142,6 +145,31 @@ static void doFetch() {
 }
 
 // ---------------------------------------------------------------------------
+// K1 button handlers (Spotpear board only; no-op on standalone module).
+// ---------------------------------------------------------------------------
+static void onK1ShortPress() {
+  log_w("K1 short press → forcing immediate calendar refresh");
+  // Reset the cadence so the loop fires doFetch() on the next iteration
+  // (any positive elapsed since 0 will exceed POLL_INTERVAL_MS). Single
+  // shot — lastCalendarFetch is updated to millis() inside the fire path.
+  lastCalendarFetch = 0;
+}
+
+static void onK1LongPress() {
+  log_w("K1 long press → factory reset (clearing NVS)");
+  Preferences p;
+  p.begin(CFG_NS, false);
+  p.clear();   // drops ssid, pass, cal — next boot drops to captive portal
+  p.end();
+  // Also wipe the WiFi stack's own persistent creds (set by
+  // WiFi.persistent(true) elsewhere) so nothing tries to auto-reconnect
+  // after the restart.
+  WiFi.disconnect(true, true);
+  delay(200);
+  ESP.restart();
+}
+
+// ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 void setup() {
@@ -151,6 +179,8 @@ void setup() {
 
   displayInit();
   drawLoading(true);
+
+  buttonsInit(onK1ShortPress, onK1LongPress);
 
   wifiBoot();        // connect from NVS or start captive portal
 
@@ -171,6 +201,8 @@ void setup() {
 // Loop — no delay(); cadence is timer-driven.
 // ---------------------------------------------------------------------------
 void loop() {
+  buttonsTick();   // even during captive portal — K1 long-press = re-reset
+
   // Captive portal: handle DNS + HTTP requests, skip the rest until the user
   // finishes setup (then we ESP.restart() from the save handler).
   if (wifiPortalActive()) {
