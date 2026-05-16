@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <HTTPClient.h>
+#include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 #include <time.h>
 #include <stdlib.h>
@@ -17,6 +18,10 @@
 #define CAL_ICAL_MAX_EVENTS 16
 #endif
 
+#ifndef CAL_ICAL_LINE_BUF
+#define CAL_ICAL_LINE_BUF 512
+#endif
+
 namespace ical {
 
 struct Event {
@@ -26,7 +31,6 @@ struct Event {
   char   location[128];
 };
 
-// UTC epoch from broken-down UTC components.
 inline time_t epochUTC(int Y, int M, int D, int h, int m, int s) {
   static const int dim[12] = { 31,28,31,30,31,30,31,31,30,31,30,31 };
   long days = 0;
@@ -42,10 +46,6 @@ inline time_t epochUTC(int Y, int M, int D, int h, int m, int s) {
   return (time_t)days * 86400 + (time_t)h * 3600 + (time_t)m * 60 + s;
 }
 
-// Parse "YYYYMMDD", "YYYYMMDDTHHMMSS", or "YYYYMMDDTHHMMSSZ".
-// Sets isAllDay on the date-only form.
-// Non-Z timed values are interpreted as LOCAL time using the device's
-// configured timezone — pragmatic for work calendars in the user's home tz.
 inline bool parseValue(const char* s, time_t& out, bool& isAllDay) {
   isAllDay = false;
   size_t n = strlen(s);
@@ -76,23 +76,6 @@ inline bool parseValue(const char* s, time_t& out, bool& isAllDay) {
   return out != (time_t)-1;
 }
 
-// iCal "line folding": continuation lines start with SPACE or TAB and join
-// onto the previous line. Mutate `body` in place to undo it.
-inline void unfoldInPlace(char* body) {
-  char* read  = body;
-  char* write = body;
-  while (*read) {
-    if (*read == '\r') { read++; continue; }
-    if (*read == '\n' && (read[1] == ' ' || read[1] == '\t')) {
-      read += 2;
-      continue;
-    }
-    *write++ = *read++;
-  }
-  *write = 0;
-}
-
-// Match "NAME" or "NAME;…". Returns pointer to the value (after ':') or null.
 inline const char* matchProp(const char* line, const char* name) {
   size_t nlen = strlen(name);
   if (strncmp(line, name, nlen) != 0) return nullptr;
@@ -102,7 +85,6 @@ inline const char* matchProp(const char* line, const char* name) {
   return colon ? colon + 1 : nullptr;
 }
 
-// Copy with TEXT-value unescaping: \\ \, \; \n \N.
 inline void copyText(char* dst, size_t dstSize, const char* src) {
   size_t i = 0;
   while (*src && i + 1 < dstSize) {
@@ -119,8 +101,66 @@ inline void copyText(char* dst, size_t dstSize, const char* src) {
   dst[i] = 0;
 }
 
+// ---------------------------------------------------------------------------
+// Process one fully-unfolded iCal logical line. Updates the per-event state
+// (cur, inEvent, …) and appends to events[] when an END:VEVENT closes a
+// timed event that falls in today's window.
+// ---------------------------------------------------------------------------
+inline void handleLine(char* line,
+                       Event& cur, bool& inEvent,
+                       bool& curAllDay, bool& curHasStart, bool& curHasEnd,
+                       Event* events, int& eventCount,
+                       time_t now, time_t eod) {
+  if (strcmp(line, "BEGIN:VEVENT") == 0) {
+    inEvent     = true;
+    cur         = {};
+    curAllDay   = false;
+    curHasStart = false;
+    curHasEnd   = false;
+    return;
+  }
+  if (strcmp(line, "END:VEVENT") == 0) {
+    inEvent = false;
+    if (curHasStart && curHasEnd && !curAllDay &&
+        cur.end >= now && cur.start <= eod &&
+        eventCount < CAL_ICAL_MAX_EVENTS) {
+      events[eventCount++] = cur;
+    }
+    return;
+  }
+  if (!inEvent) return;
+
+  const char* v;
+  if ((v = matchProp(line, "DTSTART"))) {
+    bool ad;
+    if (parseValue(v, cur.start, ad)) {
+      curHasStart = true;
+      if (ad) curAllDay = true;
+    }
+  } else if ((v = matchProp(line, "DTEND"))) {
+    bool ad;
+    if (parseValue(v, cur.end, ad)) {
+      curHasEnd = true;
+      if (ad) curAllDay = true;
+    }
+  } else if ((v = matchProp(line, "SUMMARY"))) {
+    copyText(cur.title, sizeof(cur.title), v);
+  } else if ((v = matchProp(line, "LOCATION"))) {
+    copyText(cur.location, sizeof(cur.location), v);
+  }
+}
+
 }  // namespace ical
 
+// ---------------------------------------------------------------------------
+// Stream-parse the iCal feed instead of buffering it. Working memory stays
+// at ~CAL_ICAL_LINE_BUF (512 B by default) regardless of feed size, so a
+// 100 KB calendar export no longer OOMs the C3.
+//
+// iCal RFC 5545 §3.1 "line folding": physical lines can be split with
+// CRLF + (space|tab). We re-assemble logical lines on the fly by peeking
+// after each \n.
+// ---------------------------------------------------------------------------
 inline bool calendarFetch(MeetingData& out) {
   WiFiClientSecure client;
   client.setInsecure();
@@ -145,22 +185,15 @@ inline bool calendarFetch(MeetingData& out) {
     return false;
   }
 
-  String body = http.getString();
-  http.end();
-  if (body.length() == 0) {
-    log_w("ical: empty body");
+  WiFiClient* stream = http.getStreamPtr();
+  if (!stream) {
+    log_w("ical: no stream");
+    http.end();
     return false;
   }
 
-  // Unfold in place on the String's own buffer. Avoids the second
-  // 100 KB malloc that was OOM-ing on iCal feeds with full event
-  // history. Arduino String guarantees its c_str() points at a
-  // null-terminated, writable heap buffer.
-  log_d("ical: body=%u bytes, free heap=%u", body.length(), ESP.getFreeHeap());
-  char* buf = const_cast<char*>(body.c_str());
-  ical::unfoldInPlace(buf);
+  log_d("ical: streaming, free heap=%u", ESP.getFreeHeap());
 
-  // Today's window in local time.
   time_t now = time(nullptr);
   struct tm eodTm;
   localtime_r(&now, &eodTm);
@@ -171,51 +204,76 @@ inline bool calendarFetch(MeetingData& out) {
   ical::Event events[CAL_ICAL_MAX_EVENTS];
   int eventCount = 0;
 
-  bool inEvent = false;
-  ical::Event cur = {};
-  bool curAllDay = false, curHasStart = false, curHasEnd = false;
+  bool inEvent     = false;
+  ical::Event cur  = {};
+  bool curAllDay   = false;
+  bool curHasStart = false;
+  bool curHasEnd   = false;
 
-  char* line = buf;
-  while (*line) {
-    char* nl = strchr(line, '\n');
-    if (nl) *nl = 0;
+  char  line[CAL_ICAL_LINE_BUF];
+  size_t lineLen   = 0;
+  bool   truncated = false;
+  uint32_t lastRead = millis();
+  const uint32_t streamIdleMs = 5000;
 
-    if (strcmp(line, "BEGIN:VEVENT") == 0) {
-      inEvent = true;
-      cur = {};
-      curAllDay = curHasStart = curHasEnd = false;
-    } else if (strcmp(line, "END:VEVENT") == 0) {
-      inEvent = false;
-      if (curHasStart && curHasEnd && !curAllDay &&
-          cur.end >= now && cur.start <= eod &&
-          eventCount < CAL_ICAL_MAX_EVENTS) {
-        events[eventCount++] = cur;
+  while (true) {
+    if (!stream->available()) {
+      if (!stream->connected() && !stream->available()) break;
+      if (millis() - lastRead > streamIdleMs) {
+        log_w("ical: stream idle timeout");
+        break;
       }
-    } else if (inEvent) {
-      const char* v;
-      if      ((v = ical::matchProp(line, "DTSTART"))) {
-        bool ad;
-        if (ical::parseValue(v, cur.start, ad)) {
-          curHasStart = true;
-          if (ad) curAllDay = true;
-        }
-      } else if ((v = ical::matchProp(line, "DTEND"))) {
-        bool ad;
-        if (ical::parseValue(v, cur.end, ad)) {
-          curHasEnd = true;
-          if (ad) curAllDay = true;
-        }
-      } else if ((v = ical::matchProp(line, "SUMMARY"))) {
-        ical::copyText(cur.title, sizeof(cur.title), v);
-      } else if ((v = ical::matchProp(line, "LOCATION"))) {
-        ical::copyText(cur.location, sizeof(cur.location), v);
+      delay(1);
+      continue;
+    }
+    lastRead = millis();
+    int c = stream->read();
+    if (c < 0) break;
+
+    if (c == '\r') continue;
+
+    if (c == '\n') {
+      // Peek the next char to detect line folding. WiFiClient's peek()
+      // doesn't auto-buffer, so wait briefly if nothing's there yet.
+      uint32_t peekStart = millis();
+      while (!stream->available() && stream->connected() &&
+             millis() - peekStart < 200) {
+        delay(1);
       }
+      int peeked = stream->available() ? stream->peek() : -1;
+      if (peeked == ' ' || peeked == '\t') {
+        stream->read();   // consume the continuation marker
+        continue;         // keep accumulating onto the same logical line
+      }
+
+      // Logical line complete.
+      line[lineLen] = 0;
+      if (truncated) {
+        log_d("ical: line truncated to %u bytes", (unsigned)lineLen);
+      }
+      ical::handleLine(line, cur, inEvent, curAllDay, curHasStart, curHasEnd,
+                       events, eventCount, now, eod);
+      lineLen   = 0;
+      truncated = false;
+      continue;
     }
 
-    if (!nl) break;
-    line = nl + 1;
+    if (lineLen + 1 < sizeof(line)) {
+      line[lineLen++] = (char)c;
+    } else {
+      // Overflow: keep the leading chunk (good enough for SUMMARY/LOCATION
+      // truncation; long DTSTART/DTEND lines never approach 512 bytes).
+      truncated = true;
+    }
   }
-  // No free(buf) — buf aliases body.c_str(); String destructor handles it.
+  // Flush trailing logical line if the feed didn't end with a newline.
+  if (lineLen > 0) {
+    line[lineLen] = 0;
+    ical::handleLine(line, cur, inEvent, curAllDay, curHasStart, curHasEnd,
+                     events, eventCount, now, eod);
+  }
+
+  http.end();
 
   // Sort by start time (insertion sort — N ≤ 16).
   for (int i = 1; i < eventCount; i++) {
@@ -244,7 +302,7 @@ inline bool calendarFetch(MeetingData& out) {
     out.title[0] = 0; out.location[0] = 0;
     out.startTime = 0; out.endTime = 0;
     out.remainingToday = 0;
-    log_i("ical: %d event(s), all in past → clear", eventCount);
+    log_i("ical: %d event(s), none current/future → clear", eventCount);
     return true;
   }
 
