@@ -45,8 +45,9 @@
 // ---------------------------------------------------------------------------
 // Timing
 // ---------------------------------------------------------------------------
-#define POLL_INTERVAL_MS         60000UL    // calendar fetch cadence
-#define REFRESH_INTERVAL_MS       5000UL    // display tick cadence
+#define POLL_INTERVAL_MS         30000UL    // calendar fetch cadence (30 s)
+#define REFRESH_INTERVAL_MS       5000UL    // ambient display tick (5 s)
+#define REFRESH_FAST_INTERVAL_MS  1000UL    // active-state display tick (1 s)
 #define SOON_THRESHOLD_SECS         900     // 15 min
 #define IMMINENT_THRESHOLD_SECS     300     // 5 min
 #define DIM_TIMEOUT_MS           60000UL    // 1 min idle → dim
