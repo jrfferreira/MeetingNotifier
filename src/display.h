@@ -334,10 +334,11 @@ inline void drawInMeeting(const MeetingData& m, bool fresh) {
     char title[16];
     truncate(title, sizeof(title), m.title, 14);
     drawCenteredAt(TFT_W / 2, 84, title, p.primary, FONT_LABEL);
-    char endTxt[8], endLine[16];
-    fmtClock(endTxt, sizeof(endTxt), m.endTime);
-    snprintf(endLine, sizeof(endLine), "ends %s", endTxt);
-    drawCenteredAt(TFT_W / 2, 110, endLine, p.accent, FONT_DETAIL);
+    char startTxt[8], endTxt[8], range[20];
+    fmtClock(startTxt, sizeof(startTxt), m.startTime);
+    fmtClock(endTxt,   sizeof(endTxt),   m.endTime);
+    snprintf(range, sizeof(range), "%s - %s", startTxt, endTxt);
+    drawCenteredAt(TFT_W / 2, 110, range, p.accent, FONT_DETAIL);
   }
 #else
   renderBigNumber(TFT_W / 2, 96, elapsedStr, p.primary, p.bg, fresh);
@@ -345,10 +346,11 @@ inline void drawInMeeting(const MeetingData& m, bool fresh) {
     char title[40];
     truncate(title, sizeof(title), m.title, 22);
     drawCenteredAt(TFT_W / 2, 178, title, p.primary, FONT_LABEL);
-    char endTxt[16], endLine[24];
-    fmtClock(endTxt, sizeof(endTxt), m.endTime);
-    snprintf(endLine, sizeof(endLine), "ends %s", endTxt);
-    drawCenteredAt(TFT_W / 2, 210, endLine, p.accent, FONT_DETAIL);
+    char startTxt[16], endTxt[16], range[24];
+    fmtClock(startTxt, sizeof(startTxt), m.startTime);
+    fmtClock(endTxt,   sizeof(endTxt),   m.endTime);
+    snprintf(range, sizeof(range), "%s - %s", startTxt, endTxt);
+    drawCenteredAt(TFT_W / 2, 210, range, p.accent, FONT_DETAIL);
   }
 #endif
 }
