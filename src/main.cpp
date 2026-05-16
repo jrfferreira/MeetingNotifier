@@ -36,6 +36,12 @@ static uint32_t lastSuccessfulFetchMs = 0;
 static uint8_t  pulsePhase            = 0;
 static bool     dimmed                = false;
 
+// User-dismissed meeting. While set, any fetch returning an event with
+// this startTime gets its status forced to "clear" — i.e. K1 marks the
+// current meeting "done" even when the calendar slot still has time left.
+// Cleared automatically once the calendar's focus event moves on.
+static time_t   dismissedMeetingStart = 0;
+
 // ---------------------------------------------------------------------------
 // State transitions — pure function of (wifi, meeting, now).
 // ---------------------------------------------------------------------------
@@ -139,6 +145,22 @@ static void doFetch() {
   if (!wifiOnline()) return;
   MeetingData fresh = meeting;
   if (calendarFetch(fresh)) {
+    // Honor any K1 dismissal: if the focus event is still the one the
+    // user marked done, override its status to "clear" so the state
+    // machine stops parking on IN_MEETING. Once the calendar moves on
+    // (different startTime), reset the dismissal so future fetches
+    // behave normally.
+    if (dismissedMeetingStart != 0 &&
+        fresh.startTime != dismissedMeetingStart) {
+      log_w("dismissal cleared: focus moved from %ld to %ld",
+            (long)dismissedMeetingStart, (long)fresh.startTime);
+      dismissedMeetingStart = 0;
+    }
+    if (dismissedMeetingStart != 0 &&
+        fresh.startTime == dismissedMeetingStart) {
+      strncpy(fresh.status, "clear", sizeof(fresh.status) - 1);
+      fresh.status[sizeof(fresh.status) - 1] = 0;
+    }
     meeting = fresh;
     lastSuccessfulFetchMs = millis();   // exit STATE_NO_CONNECTION on next tick
   }
@@ -148,10 +170,20 @@ static void doFetch() {
 // K1 button handlers (Spotpear board only; no-op on standalone module).
 // ---------------------------------------------------------------------------
 static void onK1ShortPress() {
+  if (state == STATE_IN_MEETING && meeting.startTime != 0) {
+    // Mark the current meeting "done" even if the calendar slot still has
+    // time left — the slot itself stays in your calendar, this is just a
+    // local "the meeting actually ended" override. The dismissal persists
+    // across re-polls until the calendar's focus event changes.
+    dismissedMeetingStart = meeting.startTime;
+    log_w("K1 short press → marking meeting '%s' (start=%ld) complete",
+          meeting.title, (long)dismissedMeetingStart);
+    strncpy(meeting.status, "clear", sizeof(meeting.status) - 1);
+    meeting.status[sizeof(meeting.status) - 1] = 0;
+    lastCalendarFetch = 0;   // also re-poll in case a later event is queued
+    return;
+  }
   log_w("K1 short press → forcing immediate calendar refresh");
-  // Reset the cadence so the loop fires doFetch() on the next iteration
-  // (any positive elapsed since 0 will exceed POLL_INTERVAL_MS). Single
-  // shot — lastCalendarFetch is updated to millis() inside the fire path.
   lastCalendarFetch = 0;
 }
 
