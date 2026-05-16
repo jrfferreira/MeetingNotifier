@@ -30,8 +30,14 @@ static uint32_t lastCalendarFetch     = 0;
 static uint32_t lastDisplayRefresh    = 0;
 static uint32_t lastStateChange       = 0;
 static uint32_t lastSuccessfulFetchMs = 0;
+static uint32_t lastReconnectAttempt  = 0;
+static uint32_t lastNtpRetryMs        = 0;
 static uint8_t  pulsePhase            = 0;
 static bool     dimmed                = false;
+
+#define RECONNECT_INTERVAL_MS  30000UL    // try WiFi.reconnect() this often when offline
+#define NTP_RETRY_INTERVAL_MS  60000UL    // re-attempt NTP if time still unset
+#define NTP_VALID_EPOCH        1700000000 // any time before this is "not synced"
 
 // ---------------------------------------------------------------------------
 // State transitions — pure function of (wifi, meeting, now).
@@ -47,10 +53,19 @@ static void updateState() {
   }
   // If fetches have been failing for too long, fall back to NO_CONNECTION
   // rather than letting a stale "clear" status look like "no more meetings".
+  // Exception: if our last known data says we're in a meeting and that
+  // meeting hasn't ended yet, keep showing the live elapsed timer. Better
+  // to keep the running clock than to alarm in the middle of a real call.
   if (lastSuccessfulFetchMs > 0 &&
       millis() - lastSuccessfulFetchMs > STALE_THRESHOLD_MS) {
-    state = STATE_NO_CONNECTION;
-    return;
+    time_t nowEpoch = time(nullptr);
+    bool stillInMeeting =
+      strcmp(meeting.status, "in_meeting") == 0 &&
+      meeting.endTime > nowEpoch;
+    if (!stillInMeeting) {
+      state = STATE_NO_CONNECTION;
+      return;
+    }
   }
   if (strcmp(meeting.status, "clear") == 0) {
     state = STATE_ALL_CLEAR;
@@ -168,6 +183,35 @@ void setup() {
 }
 
 // ---------------------------------------------------------------------------
+// Self-healing housekeeping: re-arm WiFi when it drops and re-trigger NTP
+// when the clock is still at the 1970 epoch. Both are no-ops on the happy
+// path so they're cheap to call every loop iteration.
+// ---------------------------------------------------------------------------
+static void networkHousekeeping() {
+  uint32_t nowMs = millis();
+
+  // Manual reconnect nudge on top of Arduino's built-in auto-reconnect. The
+  // auto path can stall after some failure modes; this guarantees we keep
+  // trying.
+  if (!wifiOnline() &&
+      nowMs - lastReconnectAttempt > RECONNECT_INTERVAL_MS) {
+    lastReconnectAttempt = nowMs;
+    log_w("network: WiFi offline, calling WiFi.reconnect()");
+    WiFi.reconnect();
+  }
+
+  // NTP retry. If wmAwaitNtp() timed out at boot, time(nullptr) is still
+  // near zero and every state-machine calculation is broken. Keep retrying.
+  if (wifiOnline() &&
+      time(nullptr) < NTP_VALID_EPOCH &&
+      nowMs - lastNtpRetryMs > NTP_RETRY_INTERVAL_MS) {
+    lastNtpRetryMs = nowMs;
+    log_w("network: NTP not yet synced, retrying ip-api + configTime");
+    wmConfigureTimeViaIpApi();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Loop — no delay(); cadence is timer-driven.
 // ---------------------------------------------------------------------------
 void loop() {
@@ -177,6 +221,8 @@ void loop() {
     wmPortalLoop();
     return;
   }
+
+  networkHousekeeping();
 
   uint32_t now = millis();
 
