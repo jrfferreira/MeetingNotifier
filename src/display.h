@@ -16,8 +16,11 @@
 // ---------------------------------------------------------------------------
 #if defined(USE_ST7735_144)
   #include <Adafruit_ST7735.h>
-  static Adafruit_ST7735 tft = Adafruit_ST7735(PIN_CS, PIN_DC, PIN_MOSI, PIN_SCLK, PIN_RST);
-  // Big-number font has to fit horizontally on a 128 px panel
+  // Hardware SPI — ESP32-C3 routes the SPI peripheral to any GPIOs via
+  // the GPIO matrix, so non-default pins are fine and far faster than
+  // bit-banging 32 KB through software SPI.
+  static Adafruit_ST7735 tft = Adafruit_ST7735(&SPI, PIN_CS, PIN_DC, PIN_RST);
+  // Big-number font has to fit horizontally on a 128 px panel.
   #define FONT_BIG     (&FreeSansBold18pt7b)
   #define FONT_LABEL   (&FreeSans9pt7b)
   #define FONT_DETAIL  ((const GFXfont*)nullptr)   // default 5x7
@@ -58,11 +61,12 @@ inline void displayInit() {
   digitalWrite(PIN_BLK, LOW);
 #endif
 
+  SPI.begin(PIN_SCLK, -1, PIN_MOSI, PIN_CS);
 #if defined(USE_ST7735_144)
   tft.initR(INITR_144GREENTAB);
+  tft.setSPISpeed(27000000UL);     // ST7735 is happy up to ~32 MHz
   tft.setRotation(2);
 #else
-  SPI.begin(PIN_SCLK, -1, PIN_MOSI, PIN_CS);
   tft.init(TFT_W, TFT_H, SPI_MODE0);
   tft.setSPISpeed(40000000UL);
   tft.setRotation(2);
