@@ -37,8 +37,12 @@ function doGet() {
     start:           focus.getStartTime().toISOString(),
     end:             focus.getEndTime().toISOString(),
     location:        focus.getLocation() || '',
+    // The event AFTER the focus one, when there is a current meeting AND a
+    // queued upcoming. The firmware's K1 "dismiss current" feature uses
+    // these to advance the display past a meeting that ended early.
     next_title:      current && next ? next.getTitle() : '',
     next_start:      current && next ? next.getStartTime().toISOString() : '',
+    next_end:        current && next ? next.getEndTime().toISOString()   : '',
     remaining_today: events.filter(e => e.getStartTime() > now).length,
   });
 }

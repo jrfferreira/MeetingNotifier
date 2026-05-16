@@ -27,7 +27,13 @@ size_t getArduinoLoopTaskStackSize() { return 32 * 1024; }
 // ---------------------------------------------------------------------------
 static DisplayState state     = STATE_LOADING;
 static DisplayState prevState = STATE_LOADING;
-static MeetingData  meeting   = { false, "", "", "", 0, 0, 0 };
+static MeetingData  meeting   = {};
+
+// User-dismissed meeting. While set, any fetch returning an event with
+// this startTime either advances to the calendar's next-event (when one
+// is known) or is forced to "clear". Cleared automatically once the
+// focus event changes.
+static time_t       dismissedMeetingStart = 0;
 
 static uint32_t lastCalendarFetch     = 0;
 static uint32_t lastDisplayRefresh    = 0;
@@ -150,10 +156,49 @@ static void powerTick() {
 // ---------------------------------------------------------------------------
 // Calendar refresh + state recompute.
 // ---------------------------------------------------------------------------
+// Swap the "focus" event fields with the "next" event fields. After this,
+// the data represents the upcoming meeting that was queued behind the
+// dismissed one.
+static void advanceToNextEvent(MeetingData& m) {
+  strncpy(m.title, m.nextTitle, sizeof(m.title) - 1);
+  m.title[sizeof(m.title) - 1] = 0;
+  m.location[0] = 0;     // Apps Script doesn't surface next.location; iCal can,
+                         // but for now we drop it on advance for symmetry.
+  m.startTime = m.nextStartTime;
+  m.endTime   = m.nextEndTime;
+  strncpy(m.status, "upcoming", sizeof(m.status) - 1);
+  m.status[sizeof(m.status) - 1] = 0;
+  m.nextTitle[0]  = 0;
+  m.nextStartTime = 0;
+  m.nextEndTime   = 0;
+}
+
 static void doFetch() {
   if (!wifiOnline()) return;
   MeetingData fresh = meeting;
   if (calendarFetch(fresh)) {
+    // Reset any dismissal once the calendar's focus has actually moved on
+    // (the meeting really ended, or got rescheduled).
+    if (dismissedMeetingStart != 0 &&
+        fresh.startTime != dismissedMeetingStart) {
+      log_w("dismissal cleared: focus moved from %ld to %ld",
+            (long)dismissedMeetingStart, (long)fresh.startTime);
+      dismissedMeetingStart = 0;
+    }
+    // Still on the dismissed meeting → either advance to the queued
+    // next-event or, if none is known, just force the status to clear.
+    if (dismissedMeetingStart != 0 &&
+        fresh.startTime == dismissedMeetingStart) {
+      if (fresh.nextStartTime != 0 && fresh.nextEndTime != 0) {
+        log_w("dismissal: still on %ld, advancing to next '%s' at %ld",
+              (long)dismissedMeetingStart, fresh.nextTitle,
+              (long)fresh.nextStartTime);
+        advanceToNextEvent(fresh);
+      } else {
+        strncpy(fresh.status, "clear", sizeof(fresh.status) - 1);
+        fresh.status[sizeof(fresh.status) - 1] = 0;
+      }
+    }
     meeting = fresh;
     lastSuccessfulFetchMs = millis();   // exit STATE_NO_CONNECTION on next tick
   }
@@ -163,10 +208,26 @@ static void doFetch() {
 // K1 button handlers (Spotpear board only; no-op on standalone module).
 // ---------------------------------------------------------------------------
 static void onK1ShortPress() {
+  // In a meeting → mark it done and jump straight to the next event if
+  // one is known. Outside a meeting → just force a calendar refresh.
+  if (state == STATE_IN_MEETING && meeting.startTime != 0) {
+    dismissedMeetingStart = meeting.startTime;
+    log_w("K1 → dismissing '%s' (start=%ld)",
+          meeting.title, (long)dismissedMeetingStart);
+    if (meeting.nextStartTime != 0 && meeting.nextEndTime != 0) {
+      log_w("K1 → advancing to next event '%s' (start=%ld)",
+            meeting.nextTitle, (long)meeting.nextStartTime);
+      advanceToNextEvent(meeting);
+    } else {
+      log_w("K1 → no next event known, showing clear");
+      strncpy(meeting.status, "clear", sizeof(meeting.status) - 1);
+      meeting.status[sizeof(meeting.status) - 1] = 0;
+    }
+    lastCalendarFetch = 0;       // also re-poll to surface anything queued later
+    lastDisplayRefresh = 0;      // re-render now so the user sees the change
+    return;
+  }
   log_w("K1 short press → forcing immediate calendar refresh");
-  // Reset the cadence so the loop fires doFetch() on the next iteration
-  // (any positive elapsed since 0 will exceed POLL_INTERVAL_MS). Single
-  // shot — lastCalendarFetch is updated to millis() inside the fire path.
   lastCalendarFetch = 0;
 }
 

@@ -117,13 +117,19 @@ inline bool calendarFetch(MeetingData& out) {
     out.startTime      = 0;
     out.endTime        = 0;
     out.remainingToday = 0;
+    out.nextTitle[0]   = 0;
+    out.nextStartTime  = 0;
+    out.nextEndTime    = 0;
     return true;
   }
 
-  const char* title    = doc["title"]    | "";
-  const char* loc      = doc["location"] | "";
-  const char* startIso = doc["start"]    | "";
-  const char* endIso   = doc["end"]      | "";
+  const char* title       = doc["title"]      | "";
+  const char* loc         = doc["location"]   | "";
+  const char* startIso    = doc["start"]      | "";
+  const char* endIso      = doc["end"]        | "";
+  const char* nextTitle   = doc["next_title"] | "";
+  const char* nextStartIso= doc["next_start"] | "";
+  const char* nextEndIso  = doc["next_end"]   | "";
 
   strncpy(out.title,    title, sizeof(out.title) - 1);
   out.title[sizeof(out.title) - 1] = 0;
@@ -134,6 +140,15 @@ inline bool calendarFetch(MeetingData& out) {
   out.endTime        = calParseISO8601(endIso);
   out.remainingToday = doc["remaining_today"] | 0;
   out.valid          = (out.startTime > 0);
+
+  // Next-event hints — Apps Script populates them when there's a current
+  // meeting AND a queued upcoming. Older Code.gs deployments may not
+  // include `next_end`; that just means the dismiss flow won't be able
+  // to advance to that event (it'll mark "clear" instead).
+  strncpy(out.nextTitle, nextTitle, sizeof(out.nextTitle) - 1);
+  out.nextTitle[sizeof(out.nextTitle) - 1] = 0;
+  out.nextStartTime = calParseISO8601(nextStartIso);
+  out.nextEndTime   = calParseISO8601(nextEndIso);
 
   log_i("calendar: status=%s title='%s' start=%ld end=%ld remaining=%d",
         out.status, out.title,
