@@ -128,6 +128,8 @@ inline bool wmConnectStored() {
 
   WiFi.mode(WIFI_STA);
   WiFi.setHostname("meetingnotifier");
+  WiFi.setAutoReconnect(true);   // keep trying if the AP drops us mid-session
+  WiFi.persistent(true);         // mirror creds into the WiFi stack's own flash
   WiFi.begin(ssid.c_str(), pass.c_str());
 
   uint32_t start = millis();
