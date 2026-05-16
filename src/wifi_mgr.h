@@ -17,7 +17,7 @@
 // alongside the calendar URL. Captive portal SSID is "MeetingNotifier-Setup".
 // ---------------------------------------------------------------------------
 #define WM_AP_SSID       "MeetingNotifier-Setup"
-#define WM_CONNECT_MS    20000UL
+#define WM_CONNECT_MS    10000UL
 #define WM_DNS_PORT      53
 
 static Preferences  wmPrefs;
@@ -131,7 +131,18 @@ inline bool wmConnectStored() {
   WiFi.begin(ssid.c_str(), pass.c_str());
 
   uint32_t start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < WM_CONNECT_MS) {
+  for (;;) {
+    wl_status_t s = WiFi.status();
+    if (s == WL_CONNECTED) break;
+    // Bail early on definitive failures so we drop to the captive portal
+    // within ~2 s of a wrong password instead of waiting out the full
+    // timeout. WL_CONNECT_FAILED covers AUTH_FAIL/AUTH_EXPIRE; the SSID
+    // checks cover networks the device can't see.
+    if (s == WL_CONNECT_FAILED || s == WL_NO_SSID_AVAIL) {
+      log_w("WiFi gave up early: status=%d (likely bad password or hidden SSID)", (int)s);
+      break;
+    }
+    if (millis() - start >= WM_CONNECT_MS) break;
     delay(200);
   }
   wmConnected = (WiFi.status() == WL_CONNECTED);
