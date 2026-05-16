@@ -153,13 +153,100 @@ inline void handleLine(char* line,
 }  // namespace ical
 
 // ---------------------------------------------------------------------------
-// Stream-parse the iCal feed instead of buffering it. Working memory stays
-// at ~CAL_ICAL_LINE_BUF (512 B by default) regardless of feed size, so a
-// 100 KB calendar export no longer OOMs the C3.
+// IcalParseSink — a Stream that HTTPClient::writeToStream() pumps the
+// decoded body into one byte at a time. We accumulate physical iCal lines,
+// re-fold continuations on the fly (RFC 5545 §3.1), and feed each logical
+// line to ical::handleLine() as it's complete. Working memory is the line
+// buffer (default 512 B).
 //
-// iCal RFC 5545 §3.1 "line folding": physical lines can be split with
-// CRLF + (space|tab). We re-assemble logical lines on the fly by peeking
-// after each \n.
+// Using writeToStream() rather than reading the raw socket means HTTPClient
+// does Content-Length / chunked-transfer / EOF detection for us — no more
+// stream-idle-timeout games on keep-alive connections.
+// ---------------------------------------------------------------------------
+class IcalParseSink : public Stream {
+ public:
+  IcalParseSink(ical::Event* events, int& eventCount, time_t now, time_t eod)
+    : events_(events), eventCount_(eventCount), now_(now), eod_(eod) {}
+
+  // --- Stream::write hooks (the half we actually use) ----------------------
+  size_t write(uint8_t b) override {
+    process((char)b);
+    return 1;
+  }
+  size_t write(const uint8_t* buf, size_t size) override {
+    for (size_t i = 0; i < size; i++) process((char)buf[i]);
+    return size;
+  }
+
+  // --- Stream::read interface (unused, must be present) -------------------
+  int  available() override { return 0;  }
+  int  read()      override { return -1; }
+  int  peek()      override { return -1; }
+  void flush()     override {}
+
+  // Call after writeToStream() returns to emit any trailing pending line.
+  void finalize() {
+    if (pendingNewline_ || lineLen_ > 0) emitLine();
+  }
+
+  size_t bytesIn()    const { return bytesIn_; }
+  bool   inEvent()    const { return inEvent_; }
+
+ private:
+  void process(char c) {
+    bytesIn_++;
+    if (c == '\r') return;
+
+    if (pendingNewline_) {
+      pendingNewline_ = false;
+      // RFC 5545 §3.1 line folding: a CRLF + (space|tab) inside a logical
+      // line means "ignore the CRLF and the whitespace and keep going on
+      // the same line".
+      if (c == ' ' || c == '\t') return;
+      emitLine();
+      // fall through and treat c as the first char of the next line
+    }
+
+    if (c == '\n') {
+      pendingNewline_ = true;
+      return;
+    }
+
+    if (lineLen_ + 1 < sizeof(line_)) {
+      line_[lineLen_++] = c;
+    }
+    // else: overflow → silently truncate; SUMMARY/LOCATION values longer
+    // than CAL_ICAL_LINE_BUF lose their tail but the event is still kept.
+  }
+
+  void emitLine() {
+    line_[lineLen_] = 0;
+    ical::handleLine(line_, cur_, inEvent_, curAllDay_, curHasStart_, curHasEnd_,
+                     events_, eventCount_, now_, eod_);
+    lineLen_ = 0;
+  }
+
+  ical::Event* events_;
+  int&         eventCount_;
+  time_t       now_;
+  time_t       eod_;
+
+  ical::Event  cur_         = {};
+  bool         inEvent_     = false;
+  bool         curAllDay_   = false;
+  bool         curHasStart_ = false;
+  bool         curHasEnd_   = false;
+
+  char         line_[CAL_ICAL_LINE_BUF];
+  size_t       lineLen_        = 0;
+  bool         pendingNewline_ = false;
+  size_t       bytesIn_        = 0;
+};
+
+// ---------------------------------------------------------------------------
+// Stream-parse the iCal feed via HTTPClient::writeToStream(). 512 B of
+// working memory regardless of feed size; HTTPClient handles chunked
+// transfer encoding and end-of-body detection.
 // ---------------------------------------------------------------------------
 inline bool calendarFetch(MeetingData& out) {
   WiFiClientSecure client;
@@ -185,15 +272,10 @@ inline bool calendarFetch(MeetingData& out) {
     return false;
   }
 
-  WiFiClient* stream = http.getStreamPtr();
-  if (!stream) {
-    log_w("ical: no stream");
-    http.end();
-    return false;
-  }
+  log_d("ical: streaming, free heap=%u, content-length=%d",
+        ESP.getFreeHeap(), http.getSize());
 
-  log_d("ical: streaming, free heap=%u", ESP.getFreeHeap());
-
+  // Today's window in local time.
   time_t now = time(nullptr);
   struct tm eodTm;
   localtime_r(&now, &eodTm);
@@ -204,76 +286,18 @@ inline bool calendarFetch(MeetingData& out) {
   ical::Event events[CAL_ICAL_MAX_EVENTS];
   int eventCount = 0;
 
-  bool inEvent     = false;
-  ical::Event cur  = {};
-  bool curAllDay   = false;
-  bool curHasStart = false;
-  bool curHasEnd   = false;
-
-  char  line[CAL_ICAL_LINE_BUF];
-  size_t lineLen   = 0;
-  bool   truncated = false;
-  uint32_t lastRead = millis();
-  const uint32_t streamIdleMs = 5000;
-
-  while (true) {
-    if (!stream->available()) {
-      if (!stream->connected() && !stream->available()) break;
-      if (millis() - lastRead > streamIdleMs) {
-        log_w("ical: stream idle timeout");
-        break;
-      }
-      delay(1);
-      continue;
-    }
-    lastRead = millis();
-    int c = stream->read();
-    if (c < 0) break;
-
-    if (c == '\r') continue;
-
-    if (c == '\n') {
-      // Peek the next char to detect line folding. WiFiClient's peek()
-      // doesn't auto-buffer, so wait briefly if nothing's there yet.
-      uint32_t peekStart = millis();
-      while (!stream->available() && stream->connected() &&
-             millis() - peekStart < 200) {
-        delay(1);
-      }
-      int peeked = stream->available() ? stream->peek() : -1;
-      if (peeked == ' ' || peeked == '\t') {
-        stream->read();   // consume the continuation marker
-        continue;         // keep accumulating onto the same logical line
-      }
-
-      // Logical line complete.
-      line[lineLen] = 0;
-      if (truncated) {
-        log_d("ical: line truncated to %u bytes", (unsigned)lineLen);
-      }
-      ical::handleLine(line, cur, inEvent, curAllDay, curHasStart, curHasEnd,
-                       events, eventCount, now, eod);
-      lineLen   = 0;
-      truncated = false;
-      continue;
-    }
-
-    if (lineLen + 1 < sizeof(line)) {
-      line[lineLen++] = (char)c;
-    } else {
-      // Overflow: keep the leading chunk (good enough for SUMMARY/LOCATION
-      // truncation; long DTSTART/DTEND lines never approach 512 bytes).
-      truncated = true;
-    }
-  }
-  // Flush trailing logical line if the feed didn't end with a newline.
-  if (lineLen > 0) {
-    line[lineLen] = 0;
-    ical::handleLine(line, cur, inEvent, curAllDay, curHasStart, curHasEnd,
-                     events, eventCount, now, eod);
-  }
-
+  IcalParseSink sink(events, eventCount, now, eod);
+  int written = http.writeToStream(&sink);
+  sink.finalize();
   http.end();
+
+  if (written <= 0) {
+    log_w("ical: writeToStream returned %d (read %u bytes)",
+          written, (unsigned)sink.bytesIn());
+    return false;
+  }
+  log_w("ical: parsed %u bytes, %d event(s) in today's window",
+        (unsigned)sink.bytesIn(), eventCount);
 
   // Sort by start time (insertion sort — N ≤ 16).
   for (int i = 1; i < eventCount; i++) {
@@ -302,7 +326,7 @@ inline bool calendarFetch(MeetingData& out) {
     out.title[0] = 0; out.location[0] = 0;
     out.startTime = 0; out.endTime = 0;
     out.remainingToday = 0;
-    log_i("ical: %d event(s), none current/future → clear", eventCount);
+    log_w("ical: %d event(s) total, none current/future → clear", eventCount);
     return true;
   }
 
@@ -322,8 +346,8 @@ inline bool calendarFetch(MeetingData& out) {
   }
   out.valid = true;
 
-  log_i("ical: %d event(s); status=%s title='%s' start=%ld end=%ld",
-        eventCount, out.status, out.title,
-        (long)out.startTime, (long)out.endTime);
+  log_w("ical: status=%s title='%s' start=%ld end=%ld remaining=%d",
+        out.status, out.title,
+        (long)out.startTime, (long)out.endTime, out.remainingToday);
   return true;
 }
