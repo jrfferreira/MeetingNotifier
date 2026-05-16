@@ -152,13 +152,12 @@ inline bool calendarFetch(MeetingData& out) {
     return false;
   }
 
-  // Heap-buffer for in-place unfolding (String's underlying buffer is
-  // mutable but we don't depend on that here).
-  size_t blen = body.length();
-  char* buf = (char*)malloc(blen + 1);
-  if (!buf) { log_w("ical: oom %u", (unsigned)blen); return false; }
-  memcpy(buf, body.c_str(), blen + 1);
-  body = String();      // free Arduino-String copy early
+  // Unfold in place on the String's own buffer. Avoids the second
+  // 100 KB malloc that was OOM-ing on iCal feeds with full event
+  // history. Arduino String guarantees its c_str() points at a
+  // null-terminated, writable heap buffer.
+  log_d("ical: body=%u bytes, free heap=%u", body.length(), ESP.getFreeHeap());
+  char* buf = const_cast<char*>(body.c_str());
   ical::unfoldInPlace(buf);
 
   // Today's window in local time.
@@ -216,8 +215,7 @@ inline bool calendarFetch(MeetingData& out) {
     if (!nl) break;
     line = nl + 1;
   }
-
-  free(buf);
+  // No free(buf) — buf aliases body.c_str(); String destructor handles it.
 
   // Sort by start time (insertion sort — N ≤ 16).
   for (int i = 1; i < eventCount; i++) {
