@@ -52,6 +52,7 @@
 #define IMMINENT_THRESHOLD_SECS     300     // 5 min
 #define DIM_TIMEOUT_MS           60000UL    // 1 min idle → dim
 #define SLEEP_TIMEOUT_MS        300000UL    // 5 min idle → light sleep
+#define STALE_THRESHOLD_MS      180000UL    // 3 min without a fresh fetch → "no connection"
 
 // ---------------------------------------------------------------------------
 // State machine
@@ -59,6 +60,7 @@
 typedef enum {
   STATE_LOADING,
   STATE_NO_WIFI,
+  STATE_NO_CONNECTION,   // WiFi up, calendar unreachable for STALE_THRESHOLD_MS
   STATE_IDLE,
   STATE_SOON,
   STATE_IMMINENT,
@@ -68,13 +70,14 @@ typedef enum {
 
 inline const char* stateName(DisplayState s) {
   switch (s) {
-    case STATE_LOADING:    return "LOADING";
-    case STATE_NO_WIFI:    return "NO_WIFI";
-    case STATE_IDLE:       return "IDLE";
-    case STATE_SOON:       return "SOON";
-    case STATE_IMMINENT:   return "IMMINENT";
-    case STATE_IN_MEETING: return "IN_MEETING";
-    case STATE_ALL_CLEAR:  return "ALL_CLEAR";
+    case STATE_LOADING:        return "LOADING";
+    case STATE_NO_WIFI:        return "NO_WIFI";
+    case STATE_NO_CONNECTION:  return "NO_CONNECTION";
+    case STATE_IDLE:           return "IDLE";
+    case STATE_SOON:           return "SOON";
+    case STATE_IMMINENT:       return "IMMINENT";
+    case STATE_IN_MEETING:     return "IN_MEETING";
+    case STATE_ALL_CLEAR:      return "ALL_CLEAR";
   }
   return "?";
 }
@@ -114,6 +117,8 @@ inline Palette paletteFor(DisplayState s) {
     case STATE_IN_MEETING: return { rgb565(0x06,0x0f,0x0a), rgb565(0x60,0xd0,0x90), rgb565(0x20,0x50,0x30) };
     case STATE_ALL_CLEAR:  return { rgb565(0x08,0x08,0x0e), rgb565(0x90,0x90,0xc0), rgb565(0x28,0x28,0x40) };
     case STATE_NO_WIFI:    return { rgb565(0x0a,0x0a,0x0a), rgb565(0x40,0x40,0x40), rgb565(0x28,0x28,0x28) };
+    case STATE_NO_CONNECTION:
+                           return { rgb565(0x0f,0x08,0x06), rgb565(0xff,0xa0,0x60), rgb565(0x70,0x40,0x18) };
     case STATE_LOADING:
     default:               return { rgb565(0x08,0x08,0x0e), rgb565(0x80,0x80,0xa0), rgb565(0x28,0x28,0x40) };
   }

@@ -406,6 +406,38 @@ inline void drawNoWifi(bool fresh) {
 #endif
 }
 
+inline void drawNoConnection(bool fresh) {
+  Palette p = paletteFor(STATE_NO_CONNECTION);
+  if (fresh) {
+    tft.fillScreen(p.bg);
+    clearCachedRegions();
+#if defined(USE_ST7735_144)
+    drawCenteredAt(TFT_W / 2, 4,  "no connection", p.primary, FONT_LABEL);
+#else
+    drawCenteredAt(TFT_W / 2, 32, "no connection", p.primary, FONT_LABEL);
+#endif
+  }
+
+  // Clock keeps ticking so it's obvious from across the room that the
+  // device is alive but its calendar data is stale.
+  char clock[8];
+  fmtClock(clock, sizeof(clock));
+#if defined(USE_ST7735_144)
+  renderBigNumber(TFT_W / 2, 30, clock, p.primary, p.bg, fresh);
+  if (fresh) {
+    drawCenteredAt(TFT_W / 2, 84,  "can't reach", p.accent, FONT_DETAIL);
+    drawCenteredAt(TFT_W / 2, 96,  "calendar",    p.accent, FONT_DETAIL);
+    drawCenteredAt(TFT_W / 2, 112, "retrying...", p.accent, FONT_DETAIL);
+  }
+#else
+  renderBigNumber(TFT_W / 2, 80, clock, p.primary, p.bg, fresh);
+  if (fresh) {
+    drawCenteredAt(TFT_W / 2, 168, "can't reach the calendar", p.accent, FONT_DETAIL);
+    drawCenteredAt(TFT_W / 2, 200, "retrying...",              p.accent, FONT_DETAIL);
+  }
+#endif
+}
+
 inline void drawLoading(bool fresh) {
   Palette p = paletteFor(STATE_LOADING);
   if (!fresh) return;

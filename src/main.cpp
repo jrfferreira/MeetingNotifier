@@ -26,11 +26,12 @@ static DisplayState state     = STATE_LOADING;
 static DisplayState prevState = STATE_LOADING;
 static MeetingData  meeting   = { false, "", "", "", 0, 0, 0 };
 
-static uint32_t lastCalendarFetch = 0;
-static uint32_t lastDisplayRefresh = 0;
-static uint32_t lastStateChange   = 0;
-static uint8_t  pulsePhase        = 0;
-static bool     dimmed            = false;
+static uint32_t lastCalendarFetch     = 0;
+static uint32_t lastDisplayRefresh    = 0;
+static uint32_t lastStateChange       = 0;
+static uint32_t lastSuccessfulFetchMs = 0;
+static uint8_t  pulsePhase            = 0;
+static bool     dimmed                = false;
 
 // ---------------------------------------------------------------------------
 // State transitions — pure function of (wifi, meeting, now).
@@ -42,6 +43,13 @@ static void updateState() {
   }
   if (!meeting.valid) {
     state = STATE_LOADING;
+    return;
+  }
+  // If fetches have been failing for too long, fall back to NO_CONNECTION
+  // rather than letting a stale "clear" status look like "no more meetings".
+  if (lastSuccessfulFetchMs > 0 &&
+      millis() - lastSuccessfulFetchMs > STALE_THRESHOLD_MS) {
+    state = STATE_NO_CONNECTION;
     return;
   }
   if (strcmp(meeting.status, "clear") == 0) {
@@ -80,13 +88,14 @@ static void renderScreen() {
   }
 
   switch (state) {
-    case STATE_LOADING:    drawLoading(fresh);                       break;
-    case STATE_NO_WIFI:    drawNoWifi(fresh);                        break;
-    case STATE_IDLE:       drawIdle(meeting, fresh);                 break;
-    case STATE_SOON:       drawSoon(meeting, fresh);                 break;
-    case STATE_IMMINENT:   drawImminent(meeting, fresh, pulsePhase); break;
-    case STATE_IN_MEETING: drawInMeeting(meeting, fresh);            break;
-    case STATE_ALL_CLEAR:  drawAllClear(fresh);                      break;
+    case STATE_LOADING:        drawLoading(fresh);                       break;
+    case STATE_NO_WIFI:        drawNoWifi(fresh);                        break;
+    case STATE_NO_CONNECTION:  drawNoConnection(fresh);                  break;
+    case STATE_IDLE:           drawIdle(meeting, fresh);                 break;
+    case STATE_SOON:           drawSoon(meeting, fresh);                 break;
+    case STATE_IMMINENT:       drawImminent(meeting, fresh, pulsePhase); break;
+    case STATE_IN_MEETING:     drawInMeeting(meeting, fresh);            break;
+    case STATE_ALL_CLEAR:      drawAllClear(fresh);                      break;
   }
   pulsePhase = (pulsePhase + 1) & 0x7;
 }
@@ -128,6 +137,7 @@ static void doFetch() {
   MeetingData fresh = meeting;
   if (calendarFetch(fresh)) {
     meeting = fresh;
+    lastSuccessfulFetchMs = millis();   // exit STATE_NO_CONNECTION on next tick
   }
 }
 
