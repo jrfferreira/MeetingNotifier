@@ -144,14 +144,21 @@ inline bool wmConnectStored() {
 
 // ---------------------------------------------------------------------------
 // Detect location/timezone via ip-api.com and set system TZ.
-// Falls back to UTC if the call fails.
+//
+// Arduino-ESP32's newlib doesn't bundle a `tzdata` blob, so passing an IANA
+// name like "America/Sao_Paulo" to configTzTime() silently falls back to
+// UTC. Instead we ask ip-api for its `offset` field (seconds east of UTC,
+// already DST-adjusted to the current moment) and feed that to configTime()
+// directly. DST transitions won't auto-update — but every device reboot
+// re-fetches the current offset, so a power-cycle self-heals.
 // ---------------------------------------------------------------------------
 inline bool wmConfigureTimeViaIpApi() {
   if (!wifiOnline()) return false;
 
   HTTPClient http;
   http.setTimeout(5000);
-  if (!http.begin("http://ip-api.com/json")) return false;
+  // Explicit fields so we get `offset` (not in default response).
+  if (!http.begin("http://ip-api.com/json?fields=status,offset,timezone,city,countryCode")) return false;
 
   int code = http.GET();
   if (code != 200) {
@@ -170,17 +177,19 @@ inline bool wmConfigureTimeViaIpApi() {
     return false;
   }
 
-  const char* tz = doc["timezone"] | "";
-  if (tz[0] == 0) return false;
-  strncpy(wmTzBuf, tz, sizeof(wmTzBuf) - 1);
-  wmTzBuf[sizeof(wmTzBuf) - 1] = 0;
+  long       offset_sec = doc["offset"]   | 0;     // seconds east of UTC
+  const char* tz        = doc["timezone"] | "";    // IANA name (for logging)
+  if (tz[0]) {
+    strncpy(wmTzBuf, tz, sizeof(wmTzBuf) - 1);
+    wmTzBuf[sizeof(wmTzBuf) - 1] = 0;
+  }
 
-  log_i("ip-api: city=%s country=%s tz=%s",
+  log_i("ip-api: city=%s country=%s tz=%s offset=%lds",
         (const char*)(doc["city"] | ""),
         (const char*)(doc["countryCode"] | ""),
-        wmTzBuf);
+        wmTzBuf, offset_sec);
 
-  configTzTime(wmTzBuf, "pool.ntp.org", "time.nist.gov");
+  configTime(offset_sec, 0, "pool.ntp.org", "time.nist.gov");
   return true;
 }
 
