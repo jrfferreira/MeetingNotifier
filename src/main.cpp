@@ -12,6 +12,13 @@
 #include "wifi_mgr.h"
 #include "calendar.h"
 
+// Override Arduino-ESP32's weak symbol so loopTask gets a 32 KB stack.
+// The 8 KB default is tight once we add USB-CDC + ArduinoJson + the iCal
+// heap copy + the WiFi event handlers that fire repeatedly on AUTH_FAIL,
+// and -DCONFIG_ARDUINO_LOOP_STACK_SIZE build flags don't reliably override
+// the SDK config in PlatformIO. This weak-symbol path does.
+extern "C" size_t getArduinoLoopTaskStackSize() { return 32 * 1024; }
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------

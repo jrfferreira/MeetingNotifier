@@ -15,7 +15,8 @@
   #define PIN_SCLK  3
   #define PIN_MOSI  4
   #define PIN_CS    2
-  #define PIN_DC    10
+  #define PIN_DC    0      // Confirmed via Spotpear's reference User_Setup.h;
+                           // earlier reads of the schematic were off by 10
   #define PIN_RST   5
   #define PIN_BLK   -1     // hardwired via R11/L12_1, no GPIO control
   #define TFT_W     128
