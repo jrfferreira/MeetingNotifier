@@ -42,10 +42,15 @@ inline void wmLoadCreds(String& ssid, String& pass) {
 }
 
 inline void wmSaveCreds(const String& ssid, const String& pass) {
-  wmPrefs.begin(CFG_NS, false);
-  wmPrefs.putString(CFG_KEY_SSID, ssid);
-  wmPrefs.putString(CFG_KEY_PASS, pass);
+  if (!wmPrefs.begin(CFG_NS, false)) {
+    log_e("wifi: failed to open NVS for write");
+    return;
+  }
+  size_t wroteSsid = wmPrefs.putString(CFG_KEY_SSID, ssid);
+  size_t wrotePass = wmPrefs.putString(CFG_KEY_PASS, pass);
   wmPrefs.end();
+  log_w("wifi: saved ssid (%u bytes) + pass (%u bytes)",
+        (unsigned)wroteSsid, (unsigned)wrotePass);
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +134,11 @@ inline bool wmConnectStored() {
   WiFi.mode(WIFI_STA);
   WiFi.setHostname("meetingnotifier");
   WiFi.setAutoReconnect(true);   // keep trying if the AP drops us mid-session
-  WiFi.persistent(true);         // mirror creds into the WiFi stack's own flash
+  // Intentionally NOT calling WiFi.persistent(true). Our NVS (CFG_NS) is the
+  // canonical store for creds; mirroring them into the WiFi stack's own
+  // partition on every boot is a redundant write and a possible cause of
+  // cross-namespace stomping seen in the field.
+  WiFi.persistent(false);
   WiFi.begin(ssid.c_str(), pass.c_str());
 
   uint32_t start = millis();
