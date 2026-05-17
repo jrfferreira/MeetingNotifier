@@ -390,22 +390,40 @@ inline void drawAllClear(bool fresh) {
 #endif
 }
 
-inline void drawNoWifi(bool fresh) {
+// portalActive == true → first-boot / unconfigured: show the SoftAP
+// instructions (join MeetingNotifier-Setup, open 192.168.4.1).
+// portalActive == false → WiFi dropped mid-session: just say so. The
+// captive portal isn't running, so telling the user to join a network
+// that doesn't exist would just confuse them. Auto-reconnect handles
+// the recovery in the background.
+inline void drawNoWifi(bool fresh, bool portalActive) {
   Palette p = paletteFor(STATE_NO_WIFI);
   if (!fresh) return;
   tft.fillScreen(p.bg);
+  if (portalActive) {
 #if defined(USE_ST7735_144)
-  drawCenteredAt(TFT_W / 2, 8,  "no wifi",                  p.primary, FONT_LABEL);
-  drawCenteredAt(TFT_W / 2, 36, "join network:",            p.accent,  FONT_DETAIL);
-  drawCenteredAt(TFT_W / 2, 56, "MeetingNotifier-Setup",    p.primary, FONT_DETAIL);
-  drawCenteredAt(TFT_W / 2, 84, "then open",                p.accent,  FONT_DETAIL);
-  drawCenteredAt(TFT_W / 2, 100, "192.168.4.1",             p.primary, FONT_DETAIL);
+    drawCenteredAt(TFT_W / 2, 8,   "no wifi",                p.primary, FONT_LABEL);
+    drawCenteredAt(TFT_W / 2, 36,  "join network:",          p.accent,  FONT_DETAIL);
+    drawCenteredAt(TFT_W / 2, 56,  "MeetingNotifier-Setup",  p.primary, FONT_DETAIL);
+    drawCenteredAt(TFT_W / 2, 84,  "then open",              p.accent,  FONT_DETAIL);
+    drawCenteredAt(TFT_W / 2, 100, "192.168.4.1",            p.primary, FONT_DETAIL);
 #else
-  drawCenteredAt(TFT_W / 2, 60,  "no wifi",                 p.primary, &FreeSansBold18pt7b);
-  drawCenteredAt(TFT_W / 2, 120, "join the network:",       p.accent,  FONT_DETAIL);
-  drawCenteredAt(TFT_W / 2, 144, "MeetingNotifier-Setup",   p.primary, FONT_DETAIL);
-  drawCenteredAt(TFT_W / 2, 180, "open http://192.168.4.1", p.accent,  FONT_DETAIL);
+    drawCenteredAt(TFT_W / 2, 60,  "no wifi",                p.primary, &FreeSansBold18pt7b);
+    drawCenteredAt(TFT_W / 2, 120, "join the network:",      p.accent,  FONT_DETAIL);
+    drawCenteredAt(TFT_W / 2, 144, "MeetingNotifier-Setup",  p.primary, FONT_DETAIL);
+    drawCenteredAt(TFT_W / 2, 180, "open http://192.168.4.1",p.accent,  FONT_DETAIL);
 #endif
+  } else {
+#if defined(USE_ST7735_144)
+    drawCenteredAt(TFT_W / 2, 24,  "no wifi",                p.primary, FONT_LABEL);
+    drawCenteredAt(TFT_W / 2, 60,  "reconnecting...",        p.accent,  FONT_DETAIL);
+    drawCenteredAt(TFT_W / 2, 92,  "hold K1 3s",             p.accent,  FONT_DETAIL);
+    drawCenteredAt(TFT_W / 2, 104, "to re-setup",            p.accent,  FONT_DETAIL);
+#else
+    drawCenteredAt(TFT_W / 2, 90,  "no wifi",                p.primary, &FreeSansBold18pt7b);
+    drawCenteredAt(TFT_W / 2, 150, "reconnecting...",        p.accent,  FONT_DETAIL);
+#endif
+  }
 }
 
 inline void drawNoConnection(bool fresh) {
