@@ -114,7 +114,7 @@ static void renderScreen() {
 
   switch (state) {
     case STATE_LOADING:        drawLoading(fresh);                       break;
-    case STATE_NO_WIFI:        drawNoWifi(fresh);                        break;
+    case STATE_NO_WIFI:        drawNoWifi(fresh, wifiPortalActive());    break;
     case STATE_NO_CONNECTION:  drawNoConnection(fresh);                  break;
     case STATE_IDLE:           drawIdle(meeting, fresh);                 break;
     case STATE_SOON:           drawSoon(meeting, fresh);                 break;
