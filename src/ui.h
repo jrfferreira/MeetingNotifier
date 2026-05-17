@@ -119,20 +119,21 @@ struct Palette {
 };
 
 inline Palette paletteFor(DisplayState s) {
-  // High-contrast scheme: the tone color is the background, text is near-black.
-  // Same palette semantics as before (yellow=soon, orange=imminent, red=in
-  // meeting, green=clear), just inverted for readability across the room.
+  // Alert/active states use tone-colour backgrounds with near-black text
+  // so they're readable across the room. Neutral/quiet states (IDLE,
+  // LOADING, NO_WIFI) keep the original dark-bg + light-text scheme so
+  // they don't shout when nothing's happening.
   switch (s) {
-    case STATE_IDLE:       return { rgb565(0x50,0x68,0x90), rgb565(0x08,0x10,0x18), rgb565(0x18,0x28,0x40) };  // slate blue — quiet
-    case STATE_SOON:       return { rgb565(0xf0,0xd4,0x40), rgb565(0x10,0x10,0x00), rgb565(0x60,0x50,0x10) };  // yellow — about to start
-    case STATE_IMMINENT:   return { rgb565(0xf8,0x98,0x30), rgb565(0x18,0x08,0x00), rgb565(0x60,0x30,0x08) };  // orange — minutes away
-    case STATE_IN_MEETING: return { rgb565(0xd0,0x40,0x40), rgb565(0x18,0x00,0x00), rgb565(0x40,0x10,0x10) };  // red — busy / DND
-    case STATE_ALL_CLEAR:  return { rgb565(0x60,0xc0,0x68), rgb565(0x00,0x18,0x00), rgb565(0x10,0x40,0x18) };  // green — free for the day
-    case STATE_NO_WIFI:    return { rgb565(0x80,0x80,0x80), rgb565(0x10,0x10,0x10), rgb565(0x30,0x30,0x30) };
+    case STATE_IDLE:       return { rgb565(0x0a,0x0a,0x0f), rgb565(0xe0,0xe0,0xff), rgb565(0x40,0x40,0x60) };  // navy bg, light text — quiet ambient
+    case STATE_SOON:       return { rgb565(0xf0,0xd4,0x40), rgb565(0x10,0x10,0x00), rgb565(0x60,0x50,0x10) };  // yellow bg, dark text — about to start
+    case STATE_IMMINENT:   return { rgb565(0xf8,0x98,0x30), rgb565(0x18,0x08,0x00), rgb565(0x60,0x30,0x08) };  // orange bg, dark text — minutes away
+    case STATE_IN_MEETING: return { rgb565(0xd0,0x40,0x40), rgb565(0x18,0x00,0x00), rgb565(0x40,0x10,0x10) };  // red bg, dark text — busy / DND
+    case STATE_ALL_CLEAR:  return { rgb565(0x60,0xc0,0x68), rgb565(0x00,0x18,0x00), rgb565(0x10,0x40,0x18) };  // green bg, dark text — free for the day
+    case STATE_NO_WIFI:    return { rgb565(0x0a,0x0a,0x0a), rgb565(0x40,0x40,0x40), rgb565(0x28,0x28,0x28) };  // dark bg, dim text — neutral status
     case STATE_NO_CONNECTION:
-                           return { rgb565(0xf0,0x68,0x30), rgb565(0x10,0x00,0x00), rgb565(0x40,0x10,0x00) };  // red-orange — alarming
+                           return { rgb565(0xf0,0x68,0x30), rgb565(0x10,0x00,0x00), rgb565(0x40,0x10,0x00) };  // red-orange bg, dark text — alert
     case STATE_LOADING:
-    default:               return { rgb565(0x60,0x68,0x80), rgb565(0x10,0x10,0x18), rgb565(0x28,0x28,0x40) };  // cool gray — booting
+    default:               return { rgb565(0x08,0x08,0x0e), rgb565(0x80,0x80,0xa0), rgb565(0x28,0x28,0x40) };  // dark bg, soft text — booting
   }
 }
 
