@@ -102,6 +102,13 @@ struct MeetingData {
   time_t startTime;
   time_t endTime;
   int    remainingToday;
+  // The event immediately after this one (if any). Populated by the
+  // calendar parsers; consumed by the K1 dismiss flow so we can advance
+  // the display past a meeting the user marked "done" before its
+  // scheduled end. nextStartTime == 0 means "no next event known".
+  char   nextTitle[64];
+  time_t nextStartTime;
+  time_t nextEndTime;
 };
 
 // ---------------------------------------------------------------------------

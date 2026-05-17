@@ -326,6 +326,9 @@ inline bool calendarFetch(MeetingData& out) {
     out.title[0] = 0; out.location[0] = 0;
     out.startTime = 0; out.endTime = 0;
     out.remainingToday = 0;
+    out.nextTitle[0]   = 0;
+    out.nextStartTime  = 0;
+    out.nextEndTime    = 0;
     log_w("ical: %d event(s) total, none current/future → clear", eventCount);
     return true;
   }
@@ -343,6 +346,19 @@ inline bool calendarFetch(MeetingData& out) {
   out.remainingToday = 0;
   for (int i = 0; i < eventCount; i++) {
     if (events[i].start > now) out.remainingToday++;
+  }
+
+  // Surface the next-after-focus event when there is one. K1 dismiss uses
+  // these to skip the focus and jump to whatever's next.
+  if (currentIdx >= 0 && nextIdx >= 0) {
+    strncpy(out.nextTitle, events[nextIdx].title, sizeof(out.nextTitle) - 1);
+    out.nextTitle[sizeof(out.nextTitle) - 1] = 0;
+    out.nextStartTime = events[nextIdx].start;
+    out.nextEndTime   = events[nextIdx].end;
+  } else {
+    out.nextTitle[0]  = 0;
+    out.nextStartTime = 0;
+    out.nextEndTime   = 0;
   }
   out.valid = true;
 
