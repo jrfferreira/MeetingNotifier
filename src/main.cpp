@@ -37,6 +37,7 @@ static uint32_t lastReconnectAttempt  = 0;
 static uint32_t lastNtpRetryMs        = 0;
 static uint8_t  pulsePhase            = 0;
 static bool     dimmed                = false;
+static bool     g_fetching            = false;   // true while doFetch() is in flight
 
 #define RECONNECT_INTERVAL_MS  30000UL    // try WiFi.reconnect() this often when offline
 #define NTP_RETRY_INTERVAL_MS  60000UL    // re-attempt NTP if time still unset
@@ -115,6 +116,10 @@ static void renderScreen() {
     case STATE_IN_MEETING:     drawInMeeting(meeting, fresh);            break;
     case STATE_ALL_CLEAR:      drawAllClear(fresh);                      break;
   }
+  // Re-overlay the fetching icon after the state-specific render, since a
+  // fresh repaint wipes the corner. drawFetchingIcon clears + redraws so
+  // it's safe to call every tick even when nothing changed.
+  if (fresh) drawFetchingIcon(g_fetching, paletteFor(state));
   pulsePhase = (pulsePhase + 1) & 0x7;
 }
 
@@ -152,11 +157,20 @@ static void powerTick() {
 // ---------------------------------------------------------------------------
 static void doFetch() {
   if (!wifiOnline()) return;
+
+  // Surface the fetching indicator immediately — calendarFetch() is a
+  // 2–3 s blocking HTTPS call and otherwise the device would look frozen.
+  g_fetching = true;
+  drawFetchingIcon(true, paletteFor(state));
+
   MeetingData fresh = meeting;
   if (calendarFetch(fresh)) {
     meeting = fresh;
     lastSuccessfulFetchMs = millis();   // exit STATE_NO_CONNECTION on next tick
   }
+
+  g_fetching = false;
+  drawFetchingIcon(false, paletteFor(state));
 }
 
 // ---------------------------------------------------------------------------
@@ -193,13 +207,18 @@ void setup() {
   log_i("MeetingNotifier boot");
 
   displayInit();
+  setLoadingPhase("starting up");
   drawLoading(true);
 
   buttonsInit(onK1ShortPress, onK1LongPress);
 
+  setLoadingPhase("connecting WiFi");
+  drawLoading(true);
   wifiBoot();        // connect from NVS or start captive portal
 
   if (wifiOnline()) {
+    setLoadingPhase("fetching calendar");
+    drawLoading(true);
     doFetch();
     updateState();
   } else {

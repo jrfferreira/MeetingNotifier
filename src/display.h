@@ -440,15 +440,51 @@ inline void drawNoConnection(bool fresh) {
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// Loading phase label — main.cpp updates this at each setup step so the
+// splash screen tells the user what's actually happening instead of a
+// generic "loading...".
+// ---------------------------------------------------------------------------
+static const char* g_loadingPhase   = "starting up";
+static const char* g_lastDrawnPhase = nullptr;
+
+inline void setLoadingPhase(const char* phase) {
+  g_loadingPhase = phase ? phase : "loading...";
+}
+
 inline void drawLoading(bool fresh) {
   Palette p = paletteFor(STATE_LOADING);
-  if (!fresh) return;
+  // Repaint on a fresh state entry OR whenever the phase string changes,
+  // so phase transitions during setup() show up immediately.
+  if (!fresh && g_lastDrawnPhase == g_loadingPhase) return;
   tft.fillScreen(p.bg);
 #if defined(USE_ST7735_144)
   drawCenteredAt(TFT_W / 2, 50,  "MeetingNotifier", p.primary, FONT_DETAIL);
-  drawCenteredAt(TFT_W / 2, 70,  "loading...",      p.accent,  FONT_DETAIL);
+  drawCenteredAt(TFT_W / 2, 70,  g_loadingPhase,    p.accent,  FONT_DETAIL);
 #else
   drawCenteredAt(TFT_W / 2, 100, "MeetingNotifier", p.primary, FONT_LABEL);
-  drawCenteredAt(TFT_W / 2, 140, "loading...",      p.accent,  FONT_DETAIL);
+  drawCenteredAt(TFT_W / 2, 140, g_loadingPhase,    p.accent,  FONT_DETAIL);
 #endif
+  g_lastDrawnPhase = g_loadingPhase;
+}
+
+// ---------------------------------------------------------------------------
+// Fetching indicator — small filled circle in the top-right corner of any
+// state. Shown while doFetch() is in flight so the user can see the device
+// is actually doing something during the 2–3 s blocking HTTP call.
+// Always erases and conditionally re-draws, so it cleanly overlays after a
+// fresh state repaint that wiped the corner.
+// ---------------------------------------------------------------------------
+inline void drawFetchingIcon(bool fetching, const Palette& p) {
+#if defined(USE_ST7735_144)
+  const int cx = TFT_W - 10, cy = 10, rOuter = 4, rInner = 3;
+#else
+  const int cx = TFT_W - 18, cy = 18, rOuter = 7, rInner = 5;
+#endif
+  tft.fillRect(cx - rOuter - 1, cy - rOuter - 1,
+               2 * rOuter + 2, 2 * rOuter + 2, p.bg);
+  if (fetching) {
+    tft.drawCircle(cx, cy, rOuter, p.accent);
+    tft.fillCircle(cx, cy, rInner, p.primary);
+  }
 }
