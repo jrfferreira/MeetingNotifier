@@ -356,7 +356,10 @@ void loop() {
   }
 
   if (now - lastCalendarFetch >= POLL_INTERVAL_MS) {
-    lastCalendarFetch = now;
     doFetch();
+    // Anchor the cadence on COMPLETION time, not start time. doFetch() is a
+    // blocking 2-30 s call; using `now` here would let a 30 s fetch
+    // immediately re-trigger a back-to-back fetch on the next loop tick.
+    lastCalendarFetch = millis();
   }
 }

@@ -253,7 +253,11 @@ inline bool calendarFetch(MeetingData& out) {
   client.setInsecure();
 
   HTTPClient http;
-  http.setTimeout(15000);
+  // 30 s is generous but iCal feeds on accounts with calendar history can run
+  // into hundreds of KB and writeToStream() needs all of it before returning.
+  // Previous 15 s value was tripping HTTPC_ERROR_READ_TIMEOUT (-11) on
+  // ~200 KB+ feeds.
+  http.setTimeout(30000);
   String url = cfgGetCalendarUrl();
   if (url.length() == 0) {
     log_w("ical: no URL configured");
