@@ -18,6 +18,12 @@
 #ifndef BTN_LONG_PRESS_MIN_MS
 #define BTN_LONG_PRESS_MIN_MS   3000
 #endif
+// Ignore any button reads for this many ms after boot. Protects against a
+// spurious "long press → factory reset" if the GPIO reads LOW briefly
+// during power-up before the internal pull-up settles.
+#ifndef BTN_BOOT_GRACE_MS
+#define BTN_BOOT_GRACE_MS       2000
+#endif
 
 typedef void (*ButtonCb)();
 
@@ -43,6 +49,7 @@ inline void buttonsInit(ButtonCb shortPress, ButtonCb longPress) {
 inline void buttonsTick() {
 #if PIN_K1 >= 0
   uint32_t nowMs = millis();
+  if (nowMs < BTN_BOOT_GRACE_MS) return;   // ignore reads during boot stabilisation
   bool     raw   = digitalRead(PIN_K1) == LOW;
 
   // Debounce: ignore any edge less than BTN_DEBOUNCE_MS after the previous.

@@ -195,6 +195,7 @@ void setup() {
   displayInit();
   drawLoading(true);
 
+  cfgMigrateLegacyNamespace();   // one-time copy from "wifi" → "mnotif"
   buttonsInit(onK1ShortPress, onK1LongPress);
 
   wifiBoot();        // connect from NVS or start captive portal
