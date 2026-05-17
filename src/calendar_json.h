@@ -76,7 +76,7 @@ inline bool calendarFetch(MeetingData& out) {
   client.setInsecure();      // Google Apps Script cert is well-known; skip CA bundle for v1
 
   HTTPClient http;
-  http.setTimeout(8000);
+  http.setTimeout(30000);   // matches the iCal path; Apps Script can be slow on cold-start
   String url = cfgGetCalendarUrl();
   if (url.length() == 0) {
     log_w("calendar: no URL configured");
